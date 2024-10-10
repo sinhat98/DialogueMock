@@ -1,0 +1,43 @@
+[tool.poetry]
+name = "eot-detection-exp"
+version = "0.1.0"
+description = ""
+authors = ["sinhat98 <sinhat897205@gmail.com>"]
+readme = "README.md"
+packages = [
+    { include = "src", from = "." },
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+librosa = "*"
+numpy = "==1.24"
+pandas = "*"
+matplotlib = "^3.9.2"
+pyaudio = "^0.2.14"
+fastapi = "^0.115.0"
+uvicorn = "^0.30.6"
+google-cloud-speech = "==2.26.1"
+google-cloud-texttospeech = "^2.16.3"
+azure-cognitiveservices-speech = "*"
+ja-ginza = "==5.2.0"
+python-dotenv = "^1.0.1"
+scipy = "^1.14.1"
+google-cloud-storage = "^2.18.2"
+gradio = "^4.44.0"
+twilio = "^9.2.3"
+openai = "^1.50.2"
+sounddevice = "^0.5.0"
+soundfile = "^0.12.1"
+g711 = "^1.6.5"
+
+
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
+ruff = "^0.6.7"
+asteroid = "^0.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

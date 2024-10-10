@@ -1,0 +1,18 @@
+{
+    "initial": {
+        "audio": "initial.wav",
+        "text": "お電話ありがとうございます。Shift渋谷店でございます。新規のご予約を承ります。"
+    },
+    "filler_1": {
+        "audio": "filler_1.wav",
+        "text": "承知いたしました。"
+    },
+    "filler_2": {
+        "audio": "filler_2.wav",
+        "text": "少々お待ちください。"
+    },
+    "filler_3": {
+        "audio": "filler_3.wav",
+        "text": "確認いたします。"
+    }
+}
