@@ -1,4 +1,3 @@
-from src.turntaking import EndOfTurnDetector, TurnTakingStatus
 from src.modules import (
     RuleDST,
     TemplateNLG,
@@ -34,7 +33,6 @@ class DialogBridge:
         self.stream_sid = None
         self.dst = RuleDST(templates, default_state)
         self.nlg = TemplateNLG(templates)
-        # self.end_of_turn_detector = EndOfTurnDetector(slot_keys=self.dst.initial_state.keys())
         self.streaming_nlu = StreamingNLU(slot_keys=self.dst.initial_state.keys())
         self.streaming_vad = VolumeBasedVAD()
         
@@ -42,15 +40,46 @@ class DialogBridge:
         self.awaiting_final_confirmation = False
         self.allow_barge_in = False
         self.wait_for_llm = False
-
+        self.pre_text = ""
+        
     def set_stream_sid(self, stream_sid):
         self.stream_sid = stream_sid
         
-    def turn_taking(self, text):
+    def nlu_step(self, text):
+        if text != "":
+            if text != self.pre_text:
+                self.streaming_nlu.process(text)
+        self.pre_text = text
         
-        turn_taking_status = self.end_of_turn_detector.step(text)
-        return turn_taking_status
-    
+    def vad_step(self, chunk):
+        if chunk != "/w==":
+            self.streaming_vad.update_vad_status(chunk)
+        
+    def turn_taking(self):
+        logger.debug(
+            (f"is_got_entity: {self.got_entity} " 
+             f"is_slot_filled: {self.is_slot_filled} "
+             f"is_terminal: {self.is_terminal} "
+             f"is_fast_speech_end: {self.is_fast_speech_end} "
+             f"is_slow_speech_end: {self.is_slow_speech_end}"
+             f"stability_count: {self.stability_count}"
+             f"pre_text: {self.pre_text}")   
+            )
+
+        if ((self.is_terminal and self.is_fast_speech_end)
+            or (self.is_slot_filled and self.is_fast_speech_end)
+            or self.is_slow_speech_end):
+            return TurnTakingStatus.END_OF_TURN
+        elif self.got_entity and self.is_fast_speech_end:
+            return TurnTakingStatus.BACKCHANNEL
+        else:
+            return TurnTakingStatus.CONTINUE
+        
+    def reset_turn_taking_status(self)
+        self.streaming_nlu.init_state()
+        self.streaming_vad.init_state()
+        self.pre_text = ""
+
     @property
     def is_slot_filled(self):
         return self.streaming_nlu.is_slot_filled
@@ -65,12 +94,11 @@ class DialogBridge:
 
     @property
     def is_fast_speech_end(self):
-        return len(self.streaming_vad.speech_chunks) > 5 and self.streaming_vad.fast_speech_end_flag
-        # return self.stability_count >= FAST_SPEECH_END_THRESHOLD
+        return self.streaming_vad.fast_speech_end_flag
+
     @property
     def is_slow_speech_end(self):
         return self.streaming_vad.slow_speech_end_flag
-        # return self.stability_count >= SLOW_SPEECH_END_THRESHOLD
 
     
     async def handle_barge_in(self, ws, asr_bridge):
@@ -78,7 +106,7 @@ class DialogBridge:
         # tts_bridge.stop_speaking()
         # ユーザーの発話を処理するためにASRをリセットまたは再起動
         asr_bridge.reset()
-        logger.info("Barge-in detected")
+        logger.info("Barge-in was detected")
         # 必要に応じて状態を更新
         self.allow_barge_in = False
         await ws.send_text(
