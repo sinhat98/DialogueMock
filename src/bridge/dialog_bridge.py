@@ -34,7 +34,7 @@ class DialogBridge:
         self.dst = RuleDST(templates, default_state)
         self.nlg = TemplateNLG(templates)
         self.streaming_nlu = StreamingNLUModule(slot_keys=self.dst.initial_state.keys())
-        self.streaming_vad = VolumeBasedVADModel()
+        self.streaming_vad = VolumeBasedVADModel(sample_rate=SAMPLE_RATE, volume_threshold=VOLUME_THRESHOLD, fast_speech_end_threshold=FAST_SPEECH_END_THRESHOLD, slow_speech_end_threshold=SLOW_SPEECH_END_THRESHOLD)
         
         self.waiting_for_confirmation = False
         self.awaiting_final_confirmation = False
@@ -59,14 +59,13 @@ class DialogBridge:
         logger.debug(
             (f"is_got_entity: {self.got_entity} " 
              f"is_slot_filled: {self.is_slot_filled} "
-             f"is_terminal: {self.is_terminal} "
+             f"is_terminal: {self.is_terminal_form_detected} "
              f"is_fast_speech_end: {self.is_fast_speech_end} "
-             f"is_slow_speech_end: {self.is_slow_speech_end}"
-             f"stability_count: {self.stability_count}"
+             f"is_slow_speech_end: {self.is_slow_speech_end} "
              f"pre_text: {self.pre_text}")   
             )
 
-        if ((self.is_terminal and self.is_fast_speech_end)
+        if ((self.is_terminal_form_detected and self.is_fast_speech_end)
             or (self.is_slot_filled and self.is_fast_speech_end)
             or self.is_slow_speech_end):
             return TurnTakingStatus.END_OF_TURN
@@ -209,23 +208,23 @@ class DialogBridge:
         # logger.info(f"Turn taking status: {turn_taking_status}")
         # bot_speak = await self.send_tts(ws, tts_bridge)
         # logger.info(
-        #     (f"is_got_entity: {self.end_of_turn_detector.got_entity} " 
-        #     f"is_slot_filled: {self.end_of_turn_detector.is_slot_filled} "
-        #     f"is_terminal: {self.end_of_turn_detector.is_terminal} "
-        #     f"is_fast_speech_end: {self.end_of_turn_detector.is_fast_speech_end} "
-        #     f"is_slow_speech_end: {self.end_of_turn_detector.is_slow_speech_end} "
-        #     f"len_speech_chunks: {len(self.end_of_turn_detector.streaming_vad.speech_chunks)} "
-        #     f"pre_text: {self.end_of_turn_detector.pre_text}")
+        #     (f"is_got_entity: {self.got_entity} " 
+        #     f"is_slot_filled: {self.is_slot_filled} "
+        #     f"is_terminal: {self.is_terminal} "
+        #     f"is_fast_speech_end: {self.is_fast_speech_end} "
+        #     f"is_slow_speech_end: {self.is_slow_speech_end} "
+        #     f"len_speech_chunks: {len(self.streaming_vad.speech_chunks)} "
+        #     f"pre_text: {self.pre_text}")
         # )
         
         if turn_taking_status == TurnTakingStatus.END_OF_TURN:
             logger.info(
-                (f"is_got_entity: {self.end_of_turn_detector.got_entity} " 
-                f"is_slot_filled: {self.end_of_turn_detector.is_slot_filled} "
-                f"is_terminal: {self.end_of_turn_detector.is_terminal} "
-                f"is_fast_speech_end: {self.end_of_turn_detector.is_fast_speech_end} "
-                f"is_slow_speech_end: {self.end_of_turn_detector.is_slow_speech_end}"
-                f"pre_text: {self.end_of_turn_detector.pre_text}")
+                (f"is_got_entity: {self.got_entity} " 
+                f"is_slot_filled: {self.is_slot_filled} "
+                f"is_terminal: {self.is_terminal_form_detected} "
+                f"is_fast_speech_end: {self.is_fast_speech_end} "
+                f"is_slow_speech_end: {self.is_slow_speech_end} "
+                f"pre_text: {self.pre_text}")
             )
             
             logger.info(f"End of turn detected {slots}")
@@ -237,7 +236,8 @@ class DialogBridge:
                 llm_resp = None
                 while llm_resp is None:
                     llm_resp = llm_bridge.get_response()
-                if llm_resp == "" or len(llm_resp) == 0:
+
+                if llm_resp == "" or len(llm_resp) == 0 or llm_resp is None:
                     # llmの応答が空の場合は、デフォルトの応答を返す
                     llm_resp = "APPLOGIZE"
                     

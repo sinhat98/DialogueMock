@@ -161,27 +161,6 @@ def process_date(text):
 
     return results
 
-# def process_time(text):
-#     results = {}
-#     for match in time_regex.finditer(text):
-#         time_info = match.groupdict()
-#         logger.info("time_info: %s", time_info)
-
-#         # 時刻の部分が見つかった場合
-#         if time_info.get('hour') is not None:
-#             hour = int(time_info['hour'])
-#             # 午前・午後の区別が必要
-#             if time_info.get('time_of_day') is not None:
-#                 time_of_day = time_info['time_of_day']
-#                 if time_of_day in ['午後', '夕方', '夜'] and hour < 12:
-#                     hour += 12
-#                 elif time_of_day in ['午前', '朝'] and hour == 12:
-#                     hour = 0
-#             formatted_time = f'{hour:02}:00'
-#             results[match.group()] = formatted_time
-
-#     return results
-
 def process_time(text):
     results = {}
     for match in time_regex.finditer(text):
@@ -246,6 +225,7 @@ if __name__ == "__main__":
         "10時半にお会いしましょう。",
         "3時45分に出発しましょう。"
         "再来週の日曜日に3名での会議があります。",
+        "1月15日に3人で会食をしましょう。",
     ]
     for text in test_text_list:
         # 関数の実行
@@ -259,5 +239,3 @@ if __name__ == "__main__":
             print(f"『{expression}』は {date} です。")
         for expression, time in formatted_times.items():
             print(f"『{expression}』は {time} に変換されました。")
-        for expression, n_person in formatted_n_person.items():
-            print(f"『{expression}』は {n_person} です。")

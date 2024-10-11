@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import asyncio
 from src.utils import get_custom_logger
 from src.modules.nlu.process_text import process_date, process_time, process_n_person
+from src.modules.nlu.validation import validate_date, validate_n_person, validate_time
 
 logger = get_custom_logger(__name__)
 
@@ -76,6 +77,20 @@ class StreamingNLUModule:
             self.doc = None
         else:
             self.doc = self.nlp(text)
+            
+    def validate_entity(self, label, value):
+        flag = False
+        if label == EntityLabel.DATE.value[0]:
+            flag = validate_date(value)
+        elif label == EntityLabel.TIME.value[0]:
+            flag = validate_time(value)
+        elif label == EntityLabel.N_PERSON.value[0]:
+            flag = validate_n_person(value)
+
+        if not flag:
+            value = ""
+
+        return value
 
     def extract_entities(self):
         if not self.doc:
@@ -84,7 +99,7 @@ class StreamingNLUModule:
         for ent in self.doc.ents:
             label = ent.label_.upper()
             if label in self.entities:
-                self.entities[label].append(ent.text)
+                self.entities[label].append(self.validate_entity(label, ent.text))
 
     def extract_terminal_forms(self):
         if not self.doc:

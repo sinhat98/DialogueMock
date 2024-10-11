@@ -25,7 +25,7 @@ logger = get_custom_logger(__name__)
 load_dotenv()
 
 
-template_dir = Path(__file__).parents[1] / "utils/template_audio"
+template_dir = Path(__file__).parents[1] / "modules/dialogue/utils/template_audio"
 
 # 共通の親クラス
 class BaseTTSBridge:
@@ -211,38 +211,6 @@ class AzureTTSBridge(BaseTTSBridge):
             logger.warning(f"AzureTTSBridge: {e}")
             
     def get_template_audio(self, text):
-        # flag = False
-        # if text == "INITIAL":
-        #     # 無音をqueueに入れる
-        #     silence = AudioSegment.silent(duration=1, frame_rate=8000)
-        #     audio_file = template_dir / "initial.wav"
-        #     audio = AudioSegment.from_file(audio_file, format="wav")
-        #     audio = silence + audio
-        #     audio_payload = self.trans4twilio(audio)
-        #     out_data = self.get_twilio_media_stream(audio_payload, self.stream_sid)
-        #     self.audio_queue.put((text, out_data), block=False)
-        #     flag = True
-        # elif text == "FILLER":
-        #     filler_wavs = list(template_dir.glob("filler_*.wav"))
-        #     filler_wav = random.choice(filler_wavs)
-        #     audio = AudioSegment.from_file(filler_wav, format="wav")
-        #     audio.set_frame_rate(8000)
-        #     audio_payload = self.trans4twilio(audio)
-        #     out_data = self.get_twilio_media_stream(audio_payload, self.stream_sid)
-        #     self.audio_queue.put((text, out_data), block=False)
-        #     flag = True
-        # else:
-        #     try:
-        #         template_wav = template_dir / (text.lower() + ".wav")
-        #         audio = AudioSegment.from_file(template_wav, format="wav")
-        #         audio = audio.set_frame_rate(8000)
-        #         audio_payload = self.trans4twilio(audio)
-        #         out_data = self.get_twilio_media_stream(audio_payload, self.stream_sid)
-        #         self.audio_queue.put((text, out_data), block=False)
-        #         flag = True
-        #     except FileNotFoundError:
-        #         pass
-        # return flag
         flag = False
         audiofile_candidates = list(template_dir.glob(f"{text.lower()}*.wav"))
         logger.info(f"audiofile_candidates: {audiofile_candidates}") 
