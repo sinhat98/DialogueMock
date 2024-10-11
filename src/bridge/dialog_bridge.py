@@ -2,8 +2,8 @@ from src.modules import (
     RuleDST,
     TemplateNLG,
     templates,
-    StreamingNLU,
-    VolumeBasedVAD,
+    StreamingNLUModule,
+    VolumeBasedVADModel,
 )
 from src.utils import get_custom_logger
 from copy import deepcopy
@@ -33,8 +33,8 @@ class DialogBridge:
         self.stream_sid = None
         self.dst = RuleDST(templates, default_state)
         self.nlg = TemplateNLG(templates)
-        self.streaming_nlu = StreamingNLU(slot_keys=self.dst.initial_state.keys())
-        self.streaming_vad = VolumeBasedVAD()
+        self.streaming_nlu = StreamingNLUModule(slot_keys=self.dst.initial_state.keys())
+        self.streaming_vad = VolumeBasedVADModel()
         
         self.waiting_for_confirmation = False
         self.awaiting_final_confirmation = False

@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import Response
 from starlette.websockets import WebSocketState
 
-from src.dialogue.bridge import DialogBridge, ASRBridge, TTSBridge, LLMBridge
+from src.bridge import DialogBridge, ASRBridge, TTSBridge, LLMBridge
 import logging
 from pathlib import Path
 
@@ -19,8 +19,8 @@ from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
 
 load_dotenv()
 
-from src.utils import setup_custom_logger
-logger = setup_custom_logger(__name__)
+from src.utils import get_custom_logger
+logger = get_custom_logger(__name__)
 
 
 for logger_name in logging.Logger.manager.loggerDict:

@@ -1,9 +1,9 @@
 import re
 from datetime import datetime, timedelta
-from src.nlu.regular_expression import date_regex, time_regex, n_person_regex
-from src.utils import setup_custom_logger
+from src.modules.nlu.regular_expression import date_regex, time_regex, n_person_regex
+from src.utils import get_custom_logger
 
-logger = setup_custom_logger(__name__)
+logger = get_custom_logger(__name__)
 
 # 基準日を現在の日付に設定
 today = datetime.today()

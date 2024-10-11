@@ -3,9 +3,9 @@ import numpy as np
 from g711 import decode_ulaw  # type: ignore
 from numpy.typing import NDArray
 
-from src.utils import setup_custom_logger, chunk_generator
+from src.utils import get_custom_logger, chunk_generator
 
-logger = setup_custom_logger(__name__)
+logger = get_custom_logger(__name__)
 
 
 class VolumeBasedVADModel:

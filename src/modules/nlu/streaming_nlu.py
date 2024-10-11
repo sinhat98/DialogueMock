@@ -2,10 +2,10 @@ import spacy
 from enum import Enum
 from dataclasses import dataclass, field
 import asyncio
-from src.utils import setup_custom_logger
-from src.nlu.process_text import process_date, process_time, process_n_person
+from src.utils import get_custom_logger
+from src.modules.nlu.process_text import process_date, process_time, process_n_person
 
-logger = setup_custom_logger(__name__)
+logger = get_custom_logger(__name__)
 
 class EntityLabel(Enum):
     DATE = ("DATE", "日付")

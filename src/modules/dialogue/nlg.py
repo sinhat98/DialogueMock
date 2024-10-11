@@ -1,6 +1,5 @@
 import re
 from datetime import time as dt_time
-from src.dialogue.utils.constants import TimeSegment
 
 from src.utils import get_custom_logger
 logger = get_custom_logger(__name__)
@@ -30,7 +29,7 @@ def extract_hour_and_minute(slot_value):
         hour, minute = int(hour), int(minute)
     return hour, minute
 
-def invalidate_time(hour: int, minute: int, segments: list[TimeSegment]) -> bool:
+def invalidate_time(hour: int, minute: int, segments: list) -> bool:
     """時間が営業時間内にあるかどうかをチェックする
     Args:
         hour (int): 時の部分

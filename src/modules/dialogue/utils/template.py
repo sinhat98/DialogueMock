@@ -1,6 +1,7 @@
-from src.dialogue.utils import constants
+from src.modules.dialogue.utils import constants
 
-state_template = {
+
+state_templte = {
     "名前": "",
     "日付": "",
     "店舗": "",
@@ -10,7 +11,7 @@ state_template = {
 templates = {
     constants.INITIAL_UTTERANCE: "お電話ありがとうございます。SHIFT渋谷店でございます。お電話のご用件をお話しください。",
     constants.FALLBACK: "すみません、よく聞き取れなかったのでもう一度お願いします。",
-    constants.FILLER: ["少々お待ちください。", "ちょっとお時間をいただきます。", "確認いたします。", "かしこまりました。"],
+    constants.FILLER: "FILLER",
     "action_type": {
         "新規予約": {
             constants.SCENE_INITIAL: "ご予約ですね。",
