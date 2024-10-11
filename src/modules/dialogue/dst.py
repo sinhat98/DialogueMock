@@ -1,5 +1,5 @@
-from src.utils import setup_custom_logger
-logger = setup_custom_logger(__name__)
+from src.utils import get_custom_logger
+logger = get_custom_logger(__name__)
 
 class RuleDST:
 

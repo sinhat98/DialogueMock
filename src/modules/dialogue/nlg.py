@@ -2,8 +2,8 @@ import re
 from datetime import time as dt_time
 from src.dialogue.utils.constants import TimeSegment
 
-from src.utils import setup_custom_logger
-logger = setup_custom_logger(__name__)
+from src.utils import get_custom_logger
+logger = get_custom_logger(__name__)
 
 def convert_date_format(date_str):
     match = re.match(r'(\d{1,2})/(\d{1,2})', date_str)

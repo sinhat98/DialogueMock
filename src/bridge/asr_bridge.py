@@ -3,9 +3,9 @@ import time
 from google.api_core.exceptions import GoogleAPICallError, RetryError, OutOfRange
 from google.cloud import speech
 from google.cloud.speech import RecognitionConfig, StreamingRecognitionConfig
-from src.utils import setup_custom_logger
+from src.utils import get_custom_logger
 
-logger = setup_custom_logger(__name__)
+logger = get_custom_logger(__name__)
 
 MODEL = "latest_long"
 MAX_RETRIES = 3

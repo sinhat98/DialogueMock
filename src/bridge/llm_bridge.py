@@ -1,13 +1,13 @@
 import os
 from openai import AzureOpenAI
-from src.utils import setup_custom_logger
+from src.utils import get_custom_logger
 
 from dotenv import load_dotenv
 import queue
 
 load_dotenv()
 
-logger = setup_custom_logger(__name__)
+logger = get_custom_logger(__name__)
 
 system_prompt = """
 あなたは飲食店の店員です。

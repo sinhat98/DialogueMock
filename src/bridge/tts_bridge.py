@@ -18,10 +18,9 @@ from google.cloud import texttospeech
 import azure.cognitiveservices.speech as speechsdk
 from abc import abstractmethod
 
-from src.utils import setup_custom_logger
-# from src.dialogue.utils.format import convert_date_format
+from src.utils import get_custom_logger
 
-logger = setup_custom_logger(__name__)
+logger = get_custom_logger(__name__)
 
 load_dotenv()
 

@@ -75,7 +75,7 @@ class DialogBridge:
         else:
             return TurnTakingStatus.CONTINUE
         
-    def reset_turn_taking_status(self)
+    def reset_turn_taking_status(self):
         self.streaming_nlu.init_state()
         self.streaming_vad.init_state()
         self.pre_text = ""
@@ -83,14 +83,18 @@ class DialogBridge:
     @property
     def is_slot_filled(self):
         return self.streaming_nlu.is_slot_filled
+
+    @property
+    def slots(self):
+        return self.streaming_nlu.slot_states
     
     @property
     def got_entity(self):
         return self.streaming_nlu.got_entity
 
     @property
-    def is_terminal(self):
-        return self.streaming_nlu.is_terminal
+    def is_terminal_form_detected(self):
+        return self.streaming_nlu.status.got_terminal_forms
 
     @property
     def is_fast_speech_end(self):
@@ -187,22 +191,16 @@ class DialogBridge:
             # logger.info(f"ASR reset {asr_bridge.transcription} {self.allow_barge_in}")
         
         transcription = asr_bridge.get_transcription()
-
-        turn_taking_status = self.turn_taking(transcription)
-        slots = self.end_of_turn_detector.streaming_nlu.slot_states
-        slots_filled_status = not any(bool(v) for v in slots.values())
-        terminal_forms_detected = self.end_of_turn_detector.streaming_nlu.status.got_terminal_forms
-        # logger.info(f"Slots: {slots}, terminal_forms: {self.streaming_nlu.terminal_forms}")
         
-        if not self.wait_for_llm and slots_filled_status and terminal_forms_detected:
+        self.nlu_step(transcription)
+        turn_taking_status = self.turn_taking()
+        slots = self.slots
+        slots_filled_status = not any(bool(v) for v in slots.values())
+        
+        if not self.wait_for_llm and slots_filled_status and self.is_terminal_form_detected:
             logger.info("FAQ response")
             llm_bridge.add_request(transcription)
             tts_bridge.add_response("FILLER")
-            # ここでFILLERが再生されるまで待機
-            # while tts_bridge.audio_queue.qsize() == 0:
-            #     bot_speak = await self.send_tts(ws, tts_bridge)
-            #     if bot_speak:
-            #         break
             self.wait_for_llm = True
         
         resp = None
@@ -265,25 +263,11 @@ class DialogBridge:
             asr_done = True
             logger.info("ASR done")
             end_of_stream = True
-            self.end_of_turn_detector.reset()
+            self.reset_turn_taking_status()
             
         bot_speak = await self.send_tts(ws, tts_bridge)
 
-        # if tts_bridge.audio_queue.qsize() > 0:
-        #     txt, _out = tts_bridge.audio_queue.get()
-        #     logger.info(f"Bot: {txt}")
-        #     await ws.send_text(_out)
-        #     await ws.send_text(
-        #         json.dumps({
-        #         "event": "mark",
-        #         "streamSid": self.stream_sid,
-        #         "mark": {"name": "continue"}
-        #     }))
-        #     bot_speak = True
-        # else:
-        #     bot_speak = False
-            
-        if self.allow_barge_in and len(slots) > 0:
+        if self.allow_barge_in:
             await self.handle_barge_in(ws, asr_bridge)
 
 
