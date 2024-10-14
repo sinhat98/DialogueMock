@@ -16,6 +16,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
+from google.cloud.firestore import SERVER_TIMESTAMP
 
 load_dotenv()
 
@@ -118,7 +119,7 @@ async def websocket_endpoint(ws: WebSocket):
             chunk = base64.b64decode(media["payload"])
             asr_bridge.add_request(chunk)
             asr_bridge.set_bot_speak(bot_speak)
-            dialog_bridge.end_of_turn_detector.vad_step(chunk)
+            dialog_bridge.vad_step(chunk)
             out = await dialog_bridge(ws, asr_bridge, llm_bridge, tts_bridge)
             
             if out["bot_speak"]:

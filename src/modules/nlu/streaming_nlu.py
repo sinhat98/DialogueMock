@@ -85,7 +85,10 @@ class StreamingNLUModule:
         elif label == EntityLabel.TIME.value[0]:
             flag = validate_time(value)
         elif label == EntityLabel.N_PERSON.value[0]:
+            value = process_n_person(value)
             flag = validate_n_person(value)
+        else:
+            flag = True
 
         if not flag:
             value = ""
@@ -198,11 +201,12 @@ class StreamingNLUModule:
         return text
 
     def _post_process(self):
-        for k, v in self.cur_states.items():
-            n_person = process_n_person(v)
-            logger.debug(f"n_person: {n_person}")
-            if n_person is not None:
-                self.cur_states[k] = n_person
+        pass
+        # for k, v in self.cur_states.items():
+        #     n_person = process_n_person(v)
+        #     logger.debug(f"n_person: {n_person}")
+        #     if n_person is not None:
+        #         self.cur_states[k] = n_person
 
     def process(self, text: str):
         self.init_state()
@@ -231,7 +235,7 @@ if __name__ == "__main__":
     import time
 
     async def main():
-        nlu = StreamingNLUModule(slot_keys=["DATE", "TIME", "N_PERSON"])
+        nlu = StreamingNLUModule(slot_keys=["DATE", "TIME", "N_PERSON", "PERSON"])
 
         interium_text = [
             "明日",
@@ -242,12 +246,13 @@ if __name__ == "__main__":
             "明日の朝10時に6人で",
             "明日の朝10時に6人で予約",
             "明日の朝10時に6人で予約でき",
-            "明日の朝10時に6人で予約できますか",
+            "明日の朝10時に6人で大竹で予約できますか",
         ]
 
         for text in interium_text:
             tic = time.perf_counter()
             nlu.process(text)
+            print(nlu.cur_states)
             toc = time.perf_counter() - tic
             print(f"処理時間: {toc:.3f} 秒")
 

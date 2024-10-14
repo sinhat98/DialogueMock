@@ -30,6 +30,10 @@ openai = "^1.50.2"
 sounddevice = "^0.5.0"
 soundfile = "^0.12.1"
 g711 = "^1.6.5"
+pytest = "^8.3.3"
+google-cloud-firestore = "^2.19.0"
+firebase = "^4.0.1"
+firebase-admin = "^6.5.0"
 
 
 

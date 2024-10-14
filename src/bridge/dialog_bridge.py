@@ -18,7 +18,7 @@ YES = "はい"
 NO = "いいえ"
 
 SAMPLE_RATE = 8000
-VOLUME_THRESHOLD = 500
+VOLUME_THRESHOLD = 1000
 FAST_SPEECH_END_THRESHOLD = 20
 SLOW_SPEECH_END_THRESHOLD = 100
 
@@ -62,12 +62,12 @@ class DialogBridge:
              f"is_terminal: {self.is_terminal_form_detected} "
              f"is_fast_speech_end: {self.is_fast_speech_end} "
              f"is_slow_speech_end: {self.is_slow_speech_end} "
-             f"pre_text: {self.pre_text}")   
+             f"pre_text: {self.pre_text}")
             )
 
         if ((self.is_terminal_form_detected and self.is_fast_speech_end)
             or (self.is_slot_filled and self.is_fast_speech_end)
-            or self.is_slow_speech_end):
+            or (self.is_slow_speech_end and self.pre_text != "")):
             return TurnTakingStatus.END_OF_TURN
         elif self.got_entity and self.is_fast_speech_end:
             return TurnTakingStatus.BACKCHANNEL
@@ -106,7 +106,6 @@ class DialogBridge:
     
     async def handle_barge_in(self, ws, asr_bridge):
         # botの音声を停止
-        # tts_bridge.stop_speaking()
         # ユーザーの発話を処理するためにASRをリセットまたは再起動
         asr_bridge.reset()
         logger.info("Barge-in was detected")
@@ -185,8 +184,8 @@ class DialogBridge:
         if self.stream_sid is None:
             raise ValueError("stream_sid is None")
        
-        if asr_bridge.bot_speak:
-            asr_bridge.reset()
+        # if not self.allow_barge_in:
+            # asr_bridge.reset()
             # logger.info(f"ASR reset {asr_bridge.transcription} {self.allow_barge_in}")
         
         transcription = asr_bridge.get_transcription()
@@ -266,6 +265,9 @@ class DialogBridge:
             self.reset_turn_taking_status()
             
         bot_speak = await self.send_tts(ws, tts_bridge)
+        
+        if bot_speak:
+            asr_bridge.reset()
 
         if self.allow_barge_in:
             await self.handle_barge_in(ws, asr_bridge)

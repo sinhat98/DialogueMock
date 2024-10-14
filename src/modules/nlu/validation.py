@@ -24,4 +24,8 @@ def validate_n_person(num_str):
     """
     人数表現のバリデーションを行う。整数のみ許可。
     """
-    return num_str.isdigit()
+    try:
+        num = int(num_str)
+        return num >= 0
+    except ValueError:
+        return False

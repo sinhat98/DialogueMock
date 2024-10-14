@@ -16,7 +16,7 @@ class VolumeBasedVADModel:
         sample_overlap=0.005,
         volume_threshold=1000,
         # 発話終了と判定するための連続したフレーム数
-        fast_speech_end_threshold=10,  # 20ms * 10 = 200ms
+        fast_speech_end_threshold=20,  # 20ms * 20 = 400ms
         slow_speech_end_threshold=50,  # 20ms * 50 = 1000ms
     ):
         self.sample_rate = sample_rate
@@ -68,7 +68,7 @@ class VolumeBasedVADModel:
         self.chunk_speech_end_results.append(not is_speech)
         self.fast_speech_end_flag = all(
             self.chunk_speech_end_results[-self.fast_speech_end_threshold :]
-        )
+        ) and len(self.speech_chunks) > 10
         non_speech_length = sum(
             self.chunk_speech_end_results[-self.slow_speech_end_threshold :]
         )
