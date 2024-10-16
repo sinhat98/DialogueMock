@@ -137,12 +137,19 @@ async def websocket_endpoint(ws: WebSocket):
         elif data["event"] == "mark" and data["mark"]["name"] == "continue":
             logger.info(f"Media WS: Received event 'mark': {data}")
             logger.info("Bot: Speaking is done")
+            # asr_bridge.reset()
             dialog_bridge.bot_speak = False
+            # 暗黙確認時にのみバージインを許可するため、botが話し終わったタイミングでバージインを毎回オフにする
+            dialog_bridge.allow_barge_in = False 
+            logger.info("set allow_barge_in to False")
             # asr_bridge.set_bot_speak(False)
             # dialog_bridge.bot_speak = False
-            asr_bridge.terminate()
-            asr_bridge = ASRBridge()
-            threading.Thread(target=asr_bridge.start).start()
+            # asr_bridge.terminate()
+            # asr_bridge = ASRBridge()
+            # threading.Thread(target=asr_bridge.start).start()
+        elif data["event"] == "mark" and data["mark"]["name"] == "finish":
+            logger.info(f"Media WS: Received event 'finish': {data}")
+            break
         else:
             raise "Media WS: Received unknown event"
         

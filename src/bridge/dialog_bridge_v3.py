@@ -22,6 +22,14 @@ VOLUME_THRESHOLD = 1000
 FAST_SPEECH_END_THRESHOLD = 20
 SLOW_SPEECH_END_THRESHOLD = 80
 
+BARGE_IN_THRESHOLD = 20
+BARGE_IN_UTTERANCE = [
+    "DATE_1",
+    "TIME_1",
+    "N_PERSON_1",
+    "NAME_1",
+]
+
 
 class TurnTakingStatus(IntEnum):
     END_OF_TURN = 0
@@ -38,6 +46,7 @@ class DialogBridge:
         
         self.waiting_for_confirmation = False
         self.awaiting_final_confirmation = False
+        self.is_final = False
         self.allow_barge_in = False
         self.wait_for_llm = False
         self.pre_text = ""
@@ -109,6 +118,7 @@ class DialogBridge:
             response = self.nlg.get_confirm_response(self.dst.state_stack[-1][0], YES)  # 最終確認応答を生成
             self.awaiting_final_confirmation = False
             self.waiting_for_confirmation = False
+            self.is_final = True
         else:
             nlu_output = {"action_type": "新規予約", "slot": nlu_output} if not self.dst.state_stack else {"action_type": "", "slot": nlu_output}
             # DST状態更新
@@ -122,15 +132,12 @@ class DialogBridge:
                 response = response[1] # DATA_1など
             if implicit_confirmation:
                 response_list.append(implicit_confirmation)
-                self.allow_barge_in = True
                 logger.info("set allow_barge_in to True")
 
             # 状態確認して全てのスロットが埋まっているかチェック
             if self.dst.is_complete() and not self.waiting_for_confirmation:
                 response += "ご予約を確定してもよろしいでしょうか？"
                 self.awaiting_final_confirmation = True
-                self.allow_barge_in = True
-                logger.info("set allow_barge_in to True")
         response_list.append(response)
         
         return response_list
@@ -151,6 +158,11 @@ class DialogBridge:
                 )
             )
 
+    def set_barge_in(self):
+        self.allow_barge_in = True
+        self.reset_turn_taking_status()
+        logger.info("set allow_barge_in to True")
+        
     
     async def send_tts(self, ws, tts_bridge):
         queue_size = tts_bridge.audio_queue.qsize()
@@ -159,7 +171,9 @@ class DialogBridge:
         try:
             if queue_size > 0 and not self.bot_speak:
                 txt, _out = tts_bridge.audio_queue.get()
-                logger.info(f"Bot: {txt}")
+                if txt in BARGE_IN_UTTERANCE or self.awaiting_final_confirmation:
+                    self.set_barge_in()
+                logger.info(f"Send Bot: {txt}")
                 
                 # 非同期タスクのタイムアウト設定
                 await asyncio.wait_for(ws.send_text(_out), timeout=2)  
@@ -243,9 +257,10 @@ class DialogBridge:
                 llm_resp = None
                 while llm_resp is None:
                     llm_resp = llm_bridge.get_response()
-                    
+                
+                llm_resp = str(llm_resp)
 
-                if llm_resp is None or llm_resp.strip() == "":
+                if llm_resp == "None" or llm_resp.strip() == "":
                     # llmの応答が空の場合は、デフォルトの応答を返す
                     llm_resp = "APLOGIZE"
                     
@@ -263,20 +278,32 @@ class DialogBridge:
                     resp = ["APLOGIZE"]
                 else:
                     resp = self.get_respose(transcription, slots)
+                    
+            if resp == ["APLOGIZE"] or resp == [""]:
+                resp.extend(self.get_respose(transcription, slots))
 
             for r in resp:
                 logger.info(f"Add request to tts bridge {r}")
                 tts_bridge.add_response(r)
                 
-            
-  
             asr_done = True
             logger.info("ASR done")
             self.reset_turn_taking_status()
+            
+        if self.is_final:
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "event": "mark",
+                        "streamSid": self.stream_sid,
+                        "mark": {"name": "finish"}
+                    }
+                )
+            )
         
         await self.send_tts(ws, tts_bridge)
         
-        if self.allow_barge_in and len(self.streaming_vad.speech_chunks) > 20:
+        if self.allow_barge_in and len(self.streaming_vad.speech_chunks) > BARGE_IN_THRESHOLD:
             await self.handle_barge_in(ws)
 
 
