@@ -68,15 +68,14 @@ class VolumeBasedVADModel:
         self.chunk_speech_end_results.append(not is_speech)
         self.fast_speech_end_flag = all(
             self.chunk_speech_end_results[-self.fast_speech_end_threshold :]
-        ) and len(self.speech_chunks) > 10
+        )
         non_speech_length = sum(
             self.chunk_speech_end_results[-self.slow_speech_end_threshold :]
         )
         logger.debug(f"Non speech length: {non_speech_length}")
         self.slow_speech_end_flag = all(
             self.chunk_speech_end_results[-self.slow_speech_end_threshold :]
-        ) and len(self.speech_chunks) > 10
-
+        )
     @staticmethod
     def ulaw_decode(x: bytes) -> NDArray[np.int16]:
         """u-law エンコードされた配列をデコードし、16ビット整数として返す"""

@@ -10,6 +10,8 @@ from fastapi.responses import Response
 from starlette.websockets import WebSocketState
 
 from src.bridge import DialogBridge, ASRBridge, TTSBridge, LLMBridge
+from src.bridge.dialog_bridge_v2 import DialogBridge as DialogBridgeV2
+from src.bridge.dialog_bridge_v3 import DialogBridge as DialogBridgeV3
 import logging
 from pathlib import Path
 
@@ -61,11 +63,12 @@ async def websocket_endpoint(ws: WebSocket):
     asr_bridge = ASRBridge()
     tts_bridge = TTSBridge()
     llm_bridge = LLMBridge()
-    dialog_bridge = DialogBridge()
+    # dialog_bridge = DialogBridge()
+    # dialog_bridge = DialogBridgeV2()
+    dialog_bridge = DialogBridgeV3()
     
 
     
-    bot_speak = False
 
     t_tts = threading.Thread(target=tts_bridge.response_loop)
     t_llm = threading.Thread(target=llm_bridge.response_loop)
@@ -118,13 +121,8 @@ async def websocket_endpoint(ws: WebSocket):
             media = data["media"]
             chunk = base64.b64decode(media["payload"])
             asr_bridge.add_request(chunk)
-            asr_bridge.set_bot_speak(bot_speak)
             dialog_bridge.vad_step(chunk)
             out = await dialog_bridge(ws, asr_bridge, llm_bridge, tts_bridge)
-            
-            if out["bot_speak"]:
-                bot_speak = True
-                logger.info("set bot_speak to True")
 
             if out["asr_done"]:
                 logger.info("ASR done")
@@ -132,12 +130,23 @@ async def websocket_endpoint(ws: WebSocket):
                 asr_bridge = ASRBridge()
                 threading.Thread(target=asr_bridge.start).start()
                 logger.info("Restarted asr bridge")
+            
+            # if out["bot_speak"]:
+            #     asr_bridge.set_bot_speak(True)
+            
         elif data["event"] == "mark" and data["mark"]["name"] == "continue":
             logger.info(f"Media WS: Received event 'mark': {data}")
             logger.info("Bot: Speaking is done")
-            bot_speak = False
+            dialog_bridge.bot_speak = False
+            # asr_bridge.set_bot_speak(False)
+            # dialog_bridge.bot_speak = False
+            asr_bridge.terminate()
+            asr_bridge = ASRBridge()
+            threading.Thread(target=asr_bridge.start).start()
         else:
             raise "Media WS: Received unknown event"
+        
+        
 
     logger.info("Media WS: Connection closed")
     asr_bridge.terminate()

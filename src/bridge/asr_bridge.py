@@ -12,7 +12,7 @@ MAX_RETRIES = 3
 RETRY_INTERVAL = 5  # seconds
 
 class ASRBridge:
-    def __init__(self):
+    def __init__(self, stability_threshold=1.0):
         self._queue = queue.Queue()
         self._ended = False
         self.stability = 0
@@ -20,6 +20,9 @@ class ASRBridge:
         self.is_final = False
         
         self.bot_speak = False
+        self.stability_threshold = stability_threshold
+        self.stability_count = 0
+        self.stability_count_threshold = 2
 
         config = RecognitionConfig(
             model="latest_long",
@@ -63,6 +66,10 @@ class ASRBridge:
 
     def set_bot_speak(self, bot_speak):
         self.bot_speak = bot_speak
+        
+    def set_stability_threshold(self, stability_threshold):
+        self.stability_threshold = stability_threshold
+        # logger.info(f"Set stability threshold to {self.stability_threshold}")
 
     def get_transcription(self):
         return self.transcription
@@ -109,6 +116,12 @@ class ASRBridge:
         self.is_final = False
 
     def _on_response(self, response):
+        # Botが話している場合、認識結果を無視する
+        if self.bot_speak:
+            self.transcription = ""
+            self.is_final = False
+            return
+        
         if not response.results:
             return
         result = response.results[0]
@@ -119,6 +132,16 @@ class ASRBridge:
         self.transcription = result.alternatives[0].transcript
         if self.transcription:
             logger.info(f"ASR: {self.transcription}")
+            logger.info(f"ASR stability: {self.stability}")
+        
+        if self.stability > self.stability_threshold:
+            self.stability_count += 1
+            self.terminate()
+        
+        # if self.stability_count >= self.stability_count_threshold:
+            # self.terminate()
+            # logger.info("ASR done")
+            # self.stability_count = 0
 
 if __name__ == "__main__":
     asr_bridge = ASRBridge()

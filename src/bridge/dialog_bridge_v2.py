@@ -38,10 +38,11 @@ class DialogBridge:
         
         self.waiting_for_confirmation = False
         self.awaiting_final_confirmation = False
-        self.allow_barge_in = False
+        # self.allow_barge_in = False
         self.wait_for_llm = False
         self.pre_text = ""
-        self.stack_transcription = []
+        self.stack_transcription = ""
+        self.bot_speak = False
         
     def set_stream_sid(self, stream_sid):
         self.stream_sid = stream_sid
@@ -50,26 +51,14 @@ class DialogBridge:
         if text != "":
             if text != self.pre_text:
                 self.streaming_nlu.process(text)
-        self.pre_text = text
         
     def vad_step(self, chunk):
         if chunk != "/w==":
             self.streaming_vad.update_vad_status(chunk)
         
-    def turn_taking(self):
-        logger.debug(
-            (f"is_got_entity: {self.got_entity} " 
-             f"is_slot_filled: {self.is_slot_filled} "
-             f"is_terminal: {self.is_terminal_form_detected} "
-             f"is_fast_speech_end: {self.is_fast_speech_end} "
-             f"is_slow_speech_end: {self.is_slow_speech_end} "
-             f"pre_text: {self.pre_text}")   
-            )
-        
-        if self.is_fast_speech_end:
+    def turn_taking(self, asr_bridge):
+        if asr_bridge._ended:
             return TurnTakingStatus.END_OF_TURN
-        else:
-            return TurnTakingStatus.CONTINUE
 
     def reset_turn_taking_status(self):
         self.streaming_nlu.init_state()
@@ -100,174 +89,167 @@ class DialogBridge:
     def is_slow_speech_end(self):
         return self.streaming_vad.slow_speech_end_flag
 
-    
-    async def handle_barge_in(self, ws, asr_bridge):
-        # botの音声を停止
-        # tts_bridge.stop_speaking()
-        # ユーザーの発話を処理するためにASRをリセットまたは再起動
-        asr_bridge.reset()
-        logger.info("Barge-in was detected")
-        # 必要に応じて状態を更新
-        self.allow_barge_in = False
-        await ws.send_text(
-            json.dumps(
-                {
-                    "event": "clear",
-                    "streamSid": self.stream_sid,
-                }
-            )
-        )
-
-    def get_respose(self, transcription: str, nlu_output: dict):
-        response_list = []
-        # ユーザーの最終確認応答をチェック
-        if self.awaiting_final_confirmation and YES in transcription:
-            response = self.nlg.get_confirm_response(self.dst.state_stack[-1][0], YES)  # 最終確認応答を生成
-            self.awaiting_final_confirmation = False
-            self.waiting_for_confirmation = False
-        else:
-            nlu_output = {"action_type": "新規予約", "slot": nlu_output} if not self.dst.state_stack else {"action_type": "", "slot": nlu_output}
-            # DST状態更新
-            prev_state = deepcopy(self.dst.state_stack[-1][1]) if self.dst.state_stack else self.dst.initial_state
-            self.dst.update_state(nlu_output)
-
-            # 暗黙確認応答生成
-            implicit_confirmation = self.nlg.get_confirmation_response(self.dst.state_stack[-1], prev_state)
-            response = self.nlg.get_response(self.dst.state_stack[-1])
-            if isinstance(response, tuple):
-                response = response[1] # DATA_1など
-            if implicit_confirmation:
-                response_list.append(implicit_confirmation)
-                self.allow_barge_in = True
-                logger.info("set allow_barge_in to True")
-
-            # 状態確認して全てのスロットが埋まっているかチェック
-            if self.dst.is_complete() and not self.waiting_for_confirmation:
-                response += "ご予約を確定してもよろしいでしょうか？"
-                self.awaiting_final_confirmation = True
-        response_list.append(response)
-        
-        return response_list
-    
     async def send_tts(self, ws, tts_bridge):
         queue_size = tts_bridge.audio_queue.qsize()
         # logger.info(f"TTS queue size: {queue_size}")
 
         try:
-            if queue_size > 0:
+            if queue_size > 0 and not self.bot_speak:
                 txt, _out = tts_bridge.audio_queue.get()
                 logger.info(f"Bot: {txt}")
                 
                 # 非同期タスクのタイムアウト設定
-                await asyncio.wait_for(ws.send_text(_out), timeout=5)  
+                await asyncio.wait_for(ws.send_text(_out), timeout=2)  
                 await asyncio.wait_for(ws.send_text(
                     json.dumps({
                         "event": "mark",
                         "streamSid": self.stream_sid,
                         "mark": {"name": "continue"}
-                    })), timeout=5)
+                    })), timeout=2)
                     
-                bot_speak = True
-            else:
-                bot_speak = False
+                self.bot_speak = True
         except asyncio.TimeoutError:
-            # logger.error("send_tts was blocked and raised a timeout error")
-            bot_speak = False
+            pass
+        
+    def generate_llm_response(self, transcription, llm_bridge, tts_bridge):
+        logger.info("Requesting LLM response")
+        tts_bridge.add_response("FILLER")
+        llm_bridge.add_request(transcription)
+        self.wait_for_llm = True
 
-        # logger.info(f"Send TTS completed: bot_speak={bot_speak}")
-        return bot_speak
+    async def get_llm_response(self, llm_bridge):
+        llm_resp = None
+        logger.info("Waiting for LLM response")
+        timeout = 5  # seconds
+        interval = 0.1  # check every 0.1 seconds
+        total_time = 0
+        while llm_resp is None and total_time < timeout:
+            llm_resp = llm_bridge.get_response()
+            if llm_resp is None:
+                await asyncio.sleep(interval)
+                total_time += interval
+        if not llm_resp:
+            logger.warning("LLM response timeout or empty")
+            llm_resp = "申し訳ありませんが、お手伝いできません。"
+        logger.info(f"LLM response: {llm_resp}")
+        self.wait_for_llm = False
+        return [llm_resp]
 
+    def handle_final_confirmation(self, transcription):
+        if self.awaiting_final_confirmation:
+            if YES in transcription:
+                response = self.nlg.get_confirm_response(self.dst.state_stack[-1][0], YES)
+                self.awaiting_final_confirmation = False
+                self.waiting_for_confirmation = False
+                return [response]
+            elif NO in transcription:
+                response = self.nlg.get_confirm_response(self.dst.state_stack[-1][0], NO)
+                self.awaiting_final_confirmation = False
+                self.waiting_for_confirmation = False
+                # Handle negative confirmation, possibly reset state
+                return [response]
+            else:
+                # Unclear response, ask again
+                response = "申し訳ありません。もう一度確認させていただけますか？ご予約を確定してもよろしいでしょうか？"
+                return [response]
+        return None  # Not awaiting confirmation
+
+    def get_response(self, transcription: str, slot_states: dict):
+        # First, check for final confirmation
+        confirmation_response = self.handle_final_confirmation(transcription)
+        if confirmation_response is not None:
+            return confirmation_response
+
+        response_list = []
+
+        # Prepare nlu_output for DST update
+        if not self.dst.state_stack:
+            nlu_output = {"action_type": "新規予約", "slot": slot_states}
+        else:
+            nlu_output = {"action_type": "", "slot": slot_states}
+
+        # Update DST state
+        prev_state = deepcopy(self.dst.state_stack[-1][1]) if self.dst.state_stack else self.dst.initial_state
+        self.dst.update_state(nlu_output)
+
+        # Generate implicit confirmation if any
+        implicit_confirmation = self.nlg.get_confirmation_response(self.dst.state_stack[-1], prev_state)
+        if implicit_confirmation:
+            response_list.append(implicit_confirmation)
+
+        # Generate response based on current state
+        response = self.nlg.get_response(self.dst.state_stack[-1])
+        if isinstance(response, tuple):
+            response = response[1]  # Handle tuple responses
+
+        # Check if all slots are filled and not waiting for confirmation
+        if self.dst.is_complete() and not self.waiting_for_confirmation:
+            response += "ご予約を確定してもよろしいでしょうか？"
+            self.awaiting_final_confirmation = True
+
+        response_list.append(response)
+
+        return response_list
 
     async def __call__(self, ws, asr_bridge, llm_bridge, tts_bridge):
         if self.stream_sid is None:
             raise ValueError("stream_sid is None")
-       
-        if asr_bridge.bot_speak:
-            asr_bridge.reset()
-            # logger.info(f"ASR reset {asr_bridge.transcription} {self.allow_barge_in}")
-        
-        transcription = asr_bridge.get_transcription()
-        
-        turn_taking_status = self.turn_taking()
-        slots = self.slots
-        slots_filled_status = not any(bool(v) for v in slots.values())
-        
-        if not self.wait_for_llm and slots_filled_status and self.is_terminal_form_detected:
-            logger.info("FAQ response")
-            llm_bridge.add_request(transcription)
-            tts_bridge.add_response("FILLER")
-            self.wait_for_llm = True
-        
-        resp = None
+
+        asr_bridge.set_stability_threshold(0.85)
+        turn_taking_status = self.turn_taking(asr_bridge)
+
+        resp = []
         asr_done = False
-        end_of_stream = False
-        # logger.info(f"Turn taking status: {turn_taking_status}")
-        # bot_speak = await self.send_tts(ws, tts_bridge)
-        # logger.info(
-        #     (f"is_got_entity: {self.got_entity} " 
-        #     f"is_slot_filled: {self.is_slot_filled} "
-        #     f"is_terminal: {self.is_terminal} "
-        #     f"is_fast_speech_end: {self.is_fast_speech_end} "
-        #     f"is_slow_speech_end: {self.is_slow_speech_end} "
-        #     f"len_speech_chunks: {len(self.streaming_vad.speech_chunks)} "
-        #     f"pre_text: {self.pre_text}")
-        # )
         
-        if turn_taking_status == TurnTakingStatus.END_OF_TURN:
-            self.nlu_step(transcription)
-            
-            # logger.info(
-            #     (f"is_got_entity: {self.got_entity} " 
-            #     f"is_slot_filled: {self.is_slot_filled} "
-            #     f"is_terminal: {self.is_terminal_form_detected} "
-            #     f"is_fast_speech_end: {self.is_fast_speech_end} "
-            #     f"is_slow_speech_end: {self.is_slow_speech_end} "
-            #     f"pre_text: {self.pre_text}")
-            # )
-            
-            logger.info(f"End of turn detected {slots}")
-        
-            bot_speak = await self.send_tts(ws, tts_bridge)
-        
-            
-            if self.wait_for_llm:
-                llm_resp = None
-                while llm_resp is None:
-                    llm_resp = llm_bridge.get_response()
-
-                if llm_resp == "" or len(llm_resp) == 0 or llm_resp is None:
-                    # llmの応答が空の場合は、デフォルトの応答を返す
-                    llm_resp = "APPLOGIZE"
-                    
-                logger.info(f"LLM response: {llm_resp}")
-                resp = [llm_resp]
-                
-                self.wait_for_llm = False
-
-            else:
-                if len(slots) == 0:
-                    resp = ["APPLOGIZE"]
-                else:
-                    resp = self.get_respose(transcription, slots)
-
+        # 1. LLMの応答を待っている場合は、まず応答を取得する
+        if self.wait_for_llm:
+            resp = await self.get_llm_response(llm_bridge)
             for r in resp:
-                logger.info(f"Bot: {r}")
-                tts_bridge.add_response(r)
-  
-            asr_done = True
-            logger.info("ASR done")
-            end_of_stream = True
-            self.reset_turn_taking_status()
+                if r != "":
+                    logger.info(f"Bot: {r}")
+                    tts_bridge.add_response(r)
+            asr_done = True  # LLMの応答を得たので、ASRの処理は完了とする
             
-        bot_speak = await self.send_tts(ws, tts_bridge)
+        
 
-        if self.allow_barge_in:
-            await self.handle_barge_in(ws, asr_bridge)
+        # 2. LLMの応答を待っていない場合は、通常の処理を行う
+        elif turn_taking_status == TurnTakingStatus.END_OF_TURN:
+            transcription = asr_bridge.get_transcription()
+            
 
+            if self.bot_speak:
+                transcription = ""
+                logger.info("ボットが話しているため、音声認識結果をリセットします")
+
+            if transcription != "":
+                self.streaming_nlu.process(transcription)
+
+            slots = self.slots
+            slots_filled = any(bool(v) for v in slots.values())
+
+            if not slots_filled and transcription != "" and not self.awaiting_final_confirmation:
+                # スロットが埋まっていない場合、LLMに応答をリクエスト
+                self.generate_llm_response(transcription, llm_bridge, tts_bridge)
+            else:
+                # NLGを使用して応答を生成
+                resp = self.get_response(transcription, slots)
+                for r in resp:
+                    if r != "":
+                        logger.info(f"Bot: {r}")
+                        tts_bridge.add_response(r)
+
+            if asr_bridge.bot_speak:
+                resp = []
+
+            asr_done = True
+            logger.info("ASRの処理が完了しました")
+            self.reset_turn_taking_status()
+
+        # 3. TTSを送信
+        await self.send_tts(ws, tts_bridge)
 
         out = {
-            # "asr_done": asr_bridge.is_final,
             "asr_done": asr_done,
-            "bot_speak": bot_speak,
+            "bot_speak": self.bot_speak,
         }
         return out

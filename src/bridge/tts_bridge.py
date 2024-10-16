@@ -188,7 +188,9 @@ class AzureTTSBridge(BaseTTSBridge):
 
     def stream_use_endpoint(self, text):
         try:
-            if not self.get_template_audio(text):
+            if text == "":
+                self.get_template_audio("APLOGIZE")
+            elif not self.get_template_audio(text):
                 text = self.adjust_text(text)
                 # 「。」を破線（break）に変換して無音を挿入
                 text_with_breaks = text.replace("。", "。<break time='500ms'/>")
@@ -208,7 +210,9 @@ class AzureTTSBridge(BaseTTSBridge):
                 out_data = self.get_twilio_media_stream(audio_payload, self.stream_sid)
                 self.audio_queue.put((text, out_data), block=False)
         except Exception as e:
-            logger.warning(f"AzureTTSBridge: {e}")
+            self.get_template_audio("APLOGIZE")
+            logger.warning("send apology message due to Azure TTS error")
+            
             
     def get_template_audio(self, text):
         flag = False
