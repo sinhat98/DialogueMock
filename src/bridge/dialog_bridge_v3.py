@@ -164,7 +164,7 @@ class DialogBridge:
         logger.info("set allow_barge_in to True")
         
     
-    async def send_tts(self, ws, tts_bridge):
+    async def send_tts(self, ws, tts_bridge, firestore_client):
         queue_size = tts_bridge.audio_queue.qsize()
         # logger.info(f"TTS queue size: {queue_size}")
 
@@ -174,6 +174,14 @@ class DialogBridge:
                 if txt in BARGE_IN_UTTERANCE or self.awaiting_final_confirmation:
                     self.set_barge_in()
                 logger.info(f"Send Bot: {txt}")
+                firestore_client.add_conversation_event(
+                    {"message": txt,
+                     "sender_type": "bot",
+                     "entity": {},
+                     "is_ivr": False,
+                     "created_at": firestore_client.get_timestamp(),
+                    }
+                )
                 
                 # 非同期タスクのタイムアウト設定
                 await asyncio.wait_for(ws.send_text(_out), timeout=2)  
@@ -189,7 +197,9 @@ class DialogBridge:
             pass
 
 
-    async def __call__(self, ws, asr_bridge, llm_bridge, tts_bridge):
+    async def __call__(self, ws, asr_bridge, llm_bridge, tts_bridge, **kwargs):
+        firestore_client = kwargs.get("firestore_client")
+        
         if self.stream_sid is None:
             raise ValueError("stream_sid is None")
        
@@ -240,6 +250,16 @@ class DialogBridge:
             slots = self.slots
             slots_filled_status = not any(bool(v) for v in slots.values())
             logger.info(f"slots_status: {slots} trans: {transcription}")
+            
+            if transcription != "":
+                event_data = {
+                    "message": transcription,
+                    "sender_type": "customer",
+                    "entity": {},
+                    "is_ivr": False,
+                    "created_at": firestore_client.get_timestamp(),
+                }
+                firestore_client.add_conversation_event(event_data)
         
         
             
@@ -249,7 +269,7 @@ class DialogBridge:
                 tts_bridge.add_response("FILLER")
                 self.wait_for_llm = True
         
-            await self.send_tts(ws, tts_bridge)
+            await self.send_tts(ws, tts_bridge, firestore_client)
         
             if self.bot_speak:
                 resp = []
@@ -301,7 +321,7 @@ class DialogBridge:
                 )
             )
         
-        await self.send_tts(ws, tts_bridge)
+        await self.send_tts(ws, tts_bridge, firestore_client)
         
         if self.allow_barge_in and len(self.streaming_vad.speech_chunks) > BARGE_IN_THRESHOLD:
             await self.handle_barge_in(ws)

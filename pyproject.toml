@@ -34,6 +34,9 @@ pytest = "^8.3.3"
 google-cloud-firestore = "^2.19.0"
 firebase = "^4.0.1"
 firebase-admin = "^6.5.0"
+sqlalchemy = "^2.0.36"
+flask-marshmallow = "^1.2.1"
+google-cloud-pubsub = "^2.26.1"
 
 
 
