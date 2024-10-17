@@ -3,7 +3,7 @@ import os
 import urllib.request
 
 from src.utils.gcp import GCS as GCSDriver
-from src.utils.twilio_account import get_twilio_account
+from src.utils.twilio_account import TwilioAccount
 
 from dotenv import load_dotenv
 
@@ -12,6 +12,7 @@ load_dotenv()
 ENV = str(os.environ.get("ENV"))
 GCP_PROJECT_ID = str(os.environ.get("GCP_PROJECT_ID"))
 BUCKET_NAME = str(os.environ.get("RECORDING_BUCKET_NAME"))
+TWILIO_AUTH_TOKEN = str(os.environ.get("TWILIO_AUTH_TOKEN"))
 gcs_driver = GCSDriver(ENV, GCP_PROJECT_ID)
 
 
@@ -33,7 +34,7 @@ async def twilio2gcs(
     Returns:
         None
     """
-    twilio_account = await get_twilio_account(account_sid)
+    twilio_account = TwilioAccount(account_sid, TWILIO_AUTH_TOKEN)
     auth_token = twilio_account.auth_token
 
     basic_user_and_pasword = base64.b64encode(

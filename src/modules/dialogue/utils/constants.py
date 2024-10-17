@@ -17,6 +17,7 @@ FILLER = "FILLER"
 APPLOGIZE = "APPLOGIZE"
 
 
+
 # 営業時間を表すデータクラス
 @dataclass
 class TimeSegment:

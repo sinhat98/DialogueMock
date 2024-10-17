@@ -8,6 +8,16 @@ state_templte = {
     "人数": ""
 }
 
+tts_text4log = {
+    constants.FILLER: "確認いたします",
+    constants.APPLOGIZE: "申し訳ございません、よく聞き取れませんでした",
+    "DATE_1": "ご希望の日付をお伺いしてもよろしいでしょうか？",
+    "TIME_1": "ご希望の時間をお伺いしてもよろしいでしょうか？",
+    "N_PERSON_1": "ご来店人数をお伺いしてもよろしいでしょうか？",
+    "NAME_1": "ご来店される代表者のお名前をお伺いしてもよろしいでしょうか？",
+}
+
+
 templates = {
     constants.INITIAL_UTTERANCE: "お電話ありがとうございます。SHIFT渋谷店でございます。お電話のご用件をお話しください。",
     constants.FALLBACK: "すみません、よく聞き取れなかったのでもう一度お願いします。",

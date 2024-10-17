@@ -5,6 +5,10 @@ from sqlalchemy.ext.declarative import declarative_base
 
 from src.utils.gcp import CloudSQL as CloudSQLDriver
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 ma = Marshmallow()
 Base = declarative_base()
 
@@ -20,9 +24,3 @@ db_setting = {
 csqld = CloudSQLDriver(**db_setting)
 session = aiohttp.ClientSession()
 
-async def get_projects() -> List[Project]:
-    session = await csqld.get_async_session()
-    result = await session.execute(select(Project))
-    projects = result.scalars().all()
-    await session.close()
-    return projects

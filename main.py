@@ -2,10 +2,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 import os
+import json
 import base64
 import threading
-from fastapi import FastAPI, WebSocket
+from typing import Any
+from fastapi import FastAPI, WebSocket, Request, Form, status
 from fastapi.responses import Response
 from starlette.websockets import WebSocketState
 from twilio.http.http_client import TwilioHttpClient
@@ -16,7 +19,8 @@ from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
 from src.bridge import DialogBridge, ASRBridge, TTSBridge, LLMBridge
 from src.bridge.dialog_bridge_v2 import DialogBridge as DialogBridgeV2
 from src.bridge.dialog_bridge_v3 import DialogBridge as DialogBridgeV3
-from src.utils.twilio_account import get_twilio_account
+from src.utils.twilio_account import TwilioAccount
+from src.utils import gcs as gcs_service
 
 import logging
 from pathlib import Path
@@ -122,6 +126,68 @@ def init_conversation_events(firestore_client, call_sid):
     return firestore_client
 
 
+@app.post("/recording/twilio2gcs")
+async def post_twilio2gcs(
+    request: Request,
+    RecordingUrl: str = Form(...),
+    RecordingSid: str = Form(...),
+    AccountSid: str = Form(...),
+    CallSid: str = Form(...),
+) -> Response:
+    recording_url = RecordingUrl
+    recording_sid = RecordingSid
+    account_sid = AccountSid
+    call_sid = CallSid
+    account_auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+    
+    twilio_account = TwilioAccount(account_sid, account_auth_token)
+    tenant_id = str(request.query_params.get("tenant_id"))
+    project_id = str(request.query_params.get("project_id"))
+    customer_phone_number = str(
+        request.query_params.get("customer_phone_number")
+    )
+    customer_phone_number = "+" + customer_phone_number
+    customer_id = hashlib.sha1(customer_phone_number.encode()).hexdigest()
+    conversation_id = hashlib.sha1(call_sid.encode()).hexdigest()
+    subdomain = os.environ.get("TENANT_SUBDOMAIN")
+    gcs_path = f"{subdomain}/{project_id}/{customer_id}/{conversation_id}/audio"
+    await gcs_service.twilio2gcs(
+        recording_url,
+        gcs_path,
+        account_sid,
+        custom_value=recording_sid,
+    )
+    logger.info(f"finish to copy wav file to gcs. path={gcs_path}")
+    
+    delete_twilio_call_recording(twilio_account, recording_sid)
+
+    return Response(
+        headers={"Content-Type": "application/json"},
+        content=json.dumps(
+            {
+                "recording_url": recording_url,
+                "recording_sid": recording_sid,
+            }
+        ),
+        status_code=status.HTTP_200_OK,
+    )
+    
+def delete_twilio_call_recording(
+    twilio_account: TwilioAccount, recording_sid: str
+) -> Any:
+    try:
+        client = Client(twilio_account.account_sid, twilio_account.auth_token)
+        call = client.recordings(recording_sid).delete()
+        logger.info(
+            f"finish to delete twilio recording file. sid={recording_sid}"
+        )
+        return call
+    except Exception as e:
+        logger.error(
+            f"Error in delete twilio recording file. {e}", stack_info=True
+        )
+        return None
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     logger.info("WS connection opened")
@@ -167,7 +233,7 @@ async def websocket_endpoint(ws: WebSocket):
     stream_sid = data["start"]["streamSid"]
     call_sid = data["start"]["callSid"]
     account_sid = data["start"]["accountSid"]
-    twilio_account = await get_twilio_account(account_sid)
+    twilio_account = TwilioAccount(account_sid, os.environ.get("TWILIO_AUTH_TOKEN"))
     auth_token = twilio_account.auth_token
     custom_client = TwilioHttpClient(max_retries=3)
     client = Client(account_sid, auth_token, http_client=custom_client)
@@ -206,7 +272,7 @@ async def websocket_endpoint(ws: WebSocket):
         recording_channels="dual",
     )
     
-
+    is_finished = False
     while ws.application_state == WebSocketState.CONNECTED:
         data = await ws.receive_json()
 
@@ -250,9 +316,11 @@ async def websocket_endpoint(ws: WebSocket):
             # asr_bridge.terminate()
             # asr_bridge = ASRBridge()
             # threading.Thread(target=asr_bridge.start).start()
+            if is_finished:
+                break
         elif data["event"] == "mark" and data["mark"]["name"] == "finish":
             logger.info(f"Media WS: Received event 'finish': {data}")
-            break
+            is_finished = True
         else:
             raise "Media WS: Received unknown event"
         

@@ -22,7 +22,7 @@ google-cloud-texttospeech = "^2.16.3"
 azure-cognitiveservices-speech = "*"
 ja-ginza = "==5.2.0"
 python-dotenv = "^1.0.1"
-scipy = "^1.14.1"
+scipy = "*"
 google-cloud-storage = "^2.18.2"
 gradio = "^4.44.0"
 twilio = "^9.2.3"
@@ -37,6 +37,12 @@ firebase-admin = "^6.5.0"
 sqlalchemy = "^2.0.36"
 flask-marshmallow = "^1.2.1"
 google-cloud-pubsub = "^2.26.1"
+pymysql = "^1.1.1"
+asyncmy = "^0.2.9"
+janome = "^0.5.0"
+rank-bm25 = "^0.2.2"
+gensim = "^4.3.3"
+sentence-transformers = {extras = ["onnx"], version = "^3.2.0"}
 
 
 
