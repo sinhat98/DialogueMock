@@ -1,7 +1,7 @@
 import os
 from openai import AzureOpenAI
 from src.utils import get_custom_logger
-
+from src.modules.nlu.prompt import system_prompt_for_faq, system_prompt_for_slot_filling
 from dotenv import load_dotenv
 import queue
 
@@ -9,23 +9,14 @@ load_dotenv()
 
 logger = get_custom_logger(__name__)
 
-system_prompt = """
-あなたは飲食店の店員です。
-ユーザーからのメッセージに対してFAQのAnswerリストに関連する場合は返信を行います。
-関連するものがない場合は、空文字を返してください。
-Answerリスト:
-- ランチの営業時間は11:00から15:00
-- ディナーの営業時間は17:00から23:00
-- 駐車場は2台停められます。
-- ランチは席代がかかりませんが、ディナーは席代がかかります。
-- ランチは予約できません。
-"""
 
 class LLMBridge:
-    def __init__(self):
+    def __init__(self, system_prompt, json_format=False):
         self.input_queue = queue.Queue()
         self.output_queue = queue.Queue()
         self.stream_sid = None
+        self.system_prompt = system_prompt
+        self.json_format = json_format
 
         api_key = os.environ.get("AZURE_OPENAI_API_KEY")
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
@@ -64,29 +55,47 @@ class LLMBridge:
         self.input_queue.put(None)
 
     def call_llm(self, text):
-        response = self.client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": text,
-                },
-            ]
-        )
+        if self.json_format:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                response_format={"type":"json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self.system_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": text,
+                    },
+                ]
+            )
+        else:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self.system_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": text,
+                    },
+                ]
+            )
         return response.choices[0].message.content
-
+    
 if __name__ == "__main__":
     import threading
     import time
 
-    llm_bridge = LLMBridge()
+    llm_bridge = LLMBridge(system_prompt_for_faq)
     t_llm = threading.Thread(target=llm_bridge.response_loop)
     t_llm.start()
-    llm_bridge.add_request("ランチの営業時間は何時からですか？")
+
+    # 例1: リクエストとレスポンスの処理
+    llm_bridge.add_request("2席で別々のコースを注文できますか？")
 
     tic = time.time()
     response = llm_bridge.get_response(timeout=10)  # 最大10秒待機
@@ -97,13 +106,47 @@ if __name__ == "__main__":
 
     toc = time.time() - tic
     logger.info(f"Elapsed time: {toc}")
-    
+
+    # 例2: FAQにない質問の例
     llm_bridge.add_request("ディナーの営業時間は何時からですか？")
     tic = time.time()
-    response = llm_bridge.get_response()
-    logger.info(f"Response: {response}")
+    response = llm_bridge.get_response(timeout=10)
+    if response:
+        logger.info(f"Response: {response}")
+    else:
+        logger.info("No response received.")
     toc = time.time() - tic
     logger.info(f"Elapsed time: {toc}")
 
     llm_bridge.terminate()
-    t_llm.join()  # スレッドの終了を待つ
+    
+    # スロットフィリングのテスト
+    llm_bridge = LLMBridge(system_prompt_for_slot_filling, json_format=True)
+    # t_llm = threading.Thread(target=llm_bridge.response_loop)
+    # t_llm.start()
+    
+    tic = time.time()
+    response = llm_bridge.call_llm("来週の土曜日の11時からお願いします。")
+    if response:
+        logger.info(f"Response: {response}")
+    else:
+        logger.info("No response received.")
+    toc = time.time() - tic
+    logger.info(f"Elapsed time: {toc}")
+    
+    tic = time.time()
+    response = llm_bridge.call_llm("次の土曜日の13時から2人でお願いします。")
+    print(response)
+    import json
+    json_response = json.loads(response)
+    print(json_response)
+    if response:
+        logger.info(f"Response: {response}")
+    else:
+        logger.info("No response received.")
+    toc = time.time() - tic
+    logger.info(f"Elapsed time: {toc}")
+    
+    llm_bridge.terminate()
+    t_llm.join()
+    

@@ -8,14 +8,19 @@ state_templte = {
     "人数": ""
 }
 
-tts_text4log = {
+tts_label2text = {
+    "SELECT": "対話パターンを1から4の中から選択してください。回答は「1番」のようにはっきりとおっしゃってください",
+    "INITIAL": "お電話ありがとうございます。新規のご予約を承ります。",
     constants.FILLER: "確認いたします",
-    constants.APPLOGIZE: "申し訳ございません、よく聞き取れませんでした",
+    # "LLM_FILLER": "はい",
+    constants.APLOGIZE: "申し訳ございません、うまく聞き取れませんでした",
     "DATE_1": "ご希望の日付をお伺いしてもよろしいでしょうか？",
     "TIME_1": "ご希望の時間をお伺いしてもよろしいでしょうか？",
     "N_PERSON_1": "ご来店人数をお伺いしてもよろしいでしょうか？",
     "NAME_1": "ご来店される代表者のお名前をお伺いしてもよろしいでしょうか？",
 }
+
+tts_text2label = {t: l for l, t in tts_label2text.items()}
 
 
 templates = {

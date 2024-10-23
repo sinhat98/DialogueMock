@@ -5,7 +5,6 @@ from src.modules import (
     StreamingNLUModule,
     VolumeBasedVADModel,
 )
-from src.modules.dialogue.utils.template import tts_label2text
 from src.utils import get_custom_logger
 from copy import deepcopy
 import json
@@ -23,14 +22,6 @@ VOLUME_THRESHOLD = 1000
 FAST_SPEECH_END_THRESHOLD = 20
 SLOW_SPEECH_END_THRESHOLD = 80
 
-BARGE_IN_THRESHOLD = 20
-BARGE_IN_UTTERANCE = [
-    "DATE_1",
-    "TIME_1",
-    "N_PERSON_1",
-    "NAME_1",
-]
-
 
 class TurnTakingStatus(IntEnum):
     END_OF_TURN = 0
@@ -47,7 +38,6 @@ class DialogBridge:
         
         self.waiting_for_confirmation = False
         self.awaiting_final_confirmation = False
-        self.is_final = False
         self.allow_barge_in = False
         self.wait_for_llm = False
         self.pre_text = ""
@@ -58,7 +48,9 @@ class DialogBridge:
         
     def nlu_step(self, text):
         if text != "":
-            self.streaming_nlu.process(text)
+            if text != self.pre_text:
+                self.streaming_nlu.process(text)
+            self.pre_text = text
         
     def vad_step(self, chunk):
         if chunk != "/w==":
@@ -97,10 +89,6 @@ class DialogBridge:
         return self.streaming_nlu.slot_states
     
     @property
-    def is_no_slots(self):
-        return not any(bool(v) for v in self.slots.values())
-    
-    @property
     def got_entity(self):
         return self.streaming_nlu.got_entity
 
@@ -123,7 +111,6 @@ class DialogBridge:
             response = self.nlg.get_confirm_response(self.dst.state_stack[-1][0], YES)  # 最終確認応答を生成
             self.awaiting_final_confirmation = False
             self.waiting_for_confirmation = False
-            self.is_final = True
         else:
             nlu_output = {"action_type": "新規予約", "slot": nlu_output} if not self.dst.state_stack else {"action_type": "", "slot": nlu_output}
             # DST状態更新
@@ -137,29 +124,23 @@ class DialogBridge:
                 response = response[1] # DATA_1など
             if implicit_confirmation:
                 response_list.append(implicit_confirmation)
+                self.allow_barge_in = True
                 logger.info("set allow_barge_in to True")
 
             # 状態確認して全てのスロットが埋まっているかチェック
             if self.dst.is_complete() and not self.waiting_for_confirmation:
                 response += "ご予約を確定してもよろしいでしょうか？"
                 self.awaiting_final_confirmation = True
+                self.allow_barge_in = True
+                logger.info("set allow_barge_in to True")
         response_list.append(response)
         
         return response_list
     
-    async def handle_barge_in(self, ws, firestore_client):
+    async def handle_barge_in(self, ws):
         # botの音声を停止
         if self.bot_speak:
             logger.info("Barge-in was detected")
-            event_data = {
-                "message": "BARGE_IN",
-                "sender_type": "customer",
-                "entity": {},
-                "is_ivr": False,
-                "created_at": firestore_client.get_timestamp(),
-            }
-            firestore_client.add_conversation_event(event_data)
-            self.reset_turn_taking_status()
             self.allow_barge_in = False
             self.bot_speak = False
             await ws.send_text(
@@ -171,30 +152,15 @@ class DialogBridge:
                 )
             )
 
-    def set_barge_in(self):
-        self.allow_barge_in = True
-        self.reset_turn_taking_status()
-        logger.info("set allow_barge_in to True")
-        
     
-    async def send_tts(self, ws, tts_bridge, firestore_client):
+    async def send_tts(self, ws, tts_bridge):
         queue_size = tts_bridge.audio_queue.qsize()
         # logger.info(f"TTS queue size: {queue_size}")
 
         try:
             if queue_size > 0 and not self.bot_speak:
                 txt, _out = tts_bridge.audio_queue.get()
-                if txt in BARGE_IN_UTTERANCE or self.awaiting_final_confirmation:
-                    self.set_barge_in()
-                logger.info(f"Send Bot: {txt}")
-                firestore_client.add_conversation_event(
-                    {"message": tts_label2text.get(txt, txt),
-                     "sender_type": "bot",
-                     "entity": {},
-                     "is_ivr": False,
-                     "created_at": firestore_client.get_timestamp(),
-                    }
-                )
+                logger.info(f"Bot: {txt}")
                 
                 # 非同期タスクのタイムアウト設定
                 await asyncio.wait_for(ws.send_text(_out), timeout=2)  
@@ -210,9 +176,7 @@ class DialogBridge:
             pass
 
 
-    async def __call__(self, ws, asr_bridge, llm_bridge, tts_bridge, **kwargs):
-        firestore_client = kwargs.get("firestore_client")
-        
+    async def __call__(self, ws, asr_bridge, llm_bridge, tts_bridge):
         if self.stream_sid is None:
             raise ValueError("stream_sid is None")
        
@@ -221,10 +185,11 @@ class DialogBridge:
             # logger.info(f"ASR reset {asr_bridge.transcription} {self.allow_barge_in}")
         
         transcription = asr_bridge.get_transcription()
-        if transcription != "":
-            self.pre_text = transcription
         
+        self.nlu_step(transcription)
         turn_taking_status = self.turn_taking()
+        slots = self.slots
+        slots_filled_status = not any(bool(v) for v in slots.values())
         
         resp = None
         asr_done = False
@@ -238,8 +203,6 @@ class DialogBridge:
         #     f"pre_text: {self.pre_text}")
         # )
         
-        # is_no_slots = not any(bool(v) for v in self.slots.values())
-        
         if turn_taking_status == TurnTakingStatus.END_OF_TURN:
             logger.info(
                 (f"is_got_entity: {self.got_entity} " 
@@ -249,39 +212,26 @@ class DialogBridge:
                 f"is_slow_speech_end: {self.is_slow_speech_end} "
                 f"pre_text: {self.pre_text}")
             )
-            # self.nlu_step(transcription)
-            # slots = self.slots
-            # is_no_slots = not any(bool(v) for v in slots.values())
-            # logger.info(f"End of turn detected {slots}")
+            transcription = asr_bridge.get_transcription()
+            logger.info(f"End of turn detected {slots}")
             
             if self.bot_speak:
                 transcription = ""
                 logger.info("Transcription reset because of bot_speak")
+                self.nlu_step(transcription)
+                slots = self.slots
+                slots_filled_status = not any(bool(v) for v in slots.values())
                 asr_bridge.reset()
-
-            self.nlu_step(transcription)
             
-            logger.info(f"slots_status: {self.slots} text: {transcription}")
             
-            if transcription != "":
-                event_data = {
-                    "message": transcription,
-                    "sender_type": "customer",
-                    "entity": {},
-                    "is_ivr": False,
-                    "created_at": firestore_client.get_timestamp(),
-                }
-                firestore_client.add_conversation_event(event_data)
-        
-        
             
-            if not self.wait_for_llm and self.is_no_slots and transcription != "" and (not YES in transcription or NO in transcription):
-                tts_bridge.add_response("FILLER")
+            if not self.wait_for_llm and slots_filled_status and transcription != "" and (not YES in transcription or NO in transcription):
                 logger.info("FAQ response")
                 llm_bridge.add_request(transcription)
+                tts_bridge.add_response("FILLER")
                 self.wait_for_llm = True
         
-            await self.send_tts(ws, tts_bridge, firestore_client)
+            await self.send_tts(ws, tts_bridge)
         
             if self.bot_speak:
                 resp = []
@@ -289,12 +239,11 @@ class DialogBridge:
                 llm_resp = None
                 while llm_resp is None:
                     llm_resp = llm_bridge.get_response()
-                
-                llm_resp = str(llm_resp)
+                    
 
-                if llm_resp == "None" or llm_resp.strip() == "":
+                if llm_resp is None or llm_resp.strip() == "":
                     # llmの応答が空の場合は、デフォルトの応答を返す
-                    llm_resp = "APLOGIZE"
+                    llm_resp = "APPLOGIZE"
                     
                 logger.info(f"LLM response: {llm_resp}")
                 resp = [llm_resp]
@@ -306,40 +255,29 @@ class DialogBridge:
                     # resp = [llm_resp]
                     # self.wait_for_llm = False
             else:
-                if self.is_no_slots and not self.awaiting_final_confirmation:
-                    resp = ["APLOGIZE"]
+                if len(slots) == 0:
+                    resp = ["APPLOGIZE"]
                 else:
-                    resp = self.get_respose(transcription, self.slots)
-                    
-            if resp == ["APLOGIZE"] or resp == [""]:
-                resp.extend(self.get_respose(transcription, self.slots))
+                    resp = self.get_respose(transcription, slots)
 
             for r in resp:
                 logger.info(f"Add request to tts bridge {r}")
                 tts_bridge.add_response(r)
                 
+            
+  
             asr_done = True
             logger.info("ASR done")
             self.reset_turn_taking_status()
-            
-        if self.is_final:
-            await ws.send_text(
-                json.dumps(
-                    {
-                        "event": "mark",
-                        "streamSid": self.stream_sid,
-                        "mark": {"name": "finish"}
-                    }
-                )
-            )
         
-        await self.send_tts(ws, tts_bridge, firestore_client)
+        await self.send_tts(ws, tts_bridge)
         
-        if self.allow_barge_in and len(self.streaming_vad.speech_chunks) > BARGE_IN_THRESHOLD:
-            await self.handle_barge_in(ws, firestore_client)
+        if self.allow_barge_in and not slots_filled_status:
+            await self.handle_barge_in(ws)
 
 
         out = {
+            # "asr_done": asr_bridge.is_final,
             "asr_done": asr_done,
         }
         return out

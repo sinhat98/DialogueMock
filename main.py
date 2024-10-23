@@ -14,15 +14,25 @@ from starlette.websockets import WebSocketState
 from twilio.http.http_client import TwilioHttpClient
 from twilio.rest import Client
 from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
+from twilio.rest.api.v2010.account.call import CallInstance
+from twilio.base import exceptions as twilio_exceptions
 
-
-from src.bridge import DialogBridge, ASRBridge, TTSBridge, LLMBridge
-from src.bridge.dialog_bridge_v2 import DialogBridge as DialogBridgeV2
-from src.bridge.dialog_bridge_v3 import DialogBridge as DialogBridgeV3
+from src.modules.nlu.prompt import system_prompt_for_faq, system_prompt_for_slot_filling
+from src.modules.dialogue.utils.template import tts_label2text
+from src.bridge import ASRBridge, TTSBridge, LLMBridge
+from src.bridge.dialog_bridge import (
+    DialogBridgeWithLLMSF as DialogBridgeV1,
+    DialogBridgeWithFastSF as DialogBridgeV2,
+    DialogBridgeWithFastSFAndVolumeBasedEoT as DialogBridgeV3,
+    DialogBridgeWithLLMSFAndVolumeBasedEoT as DialogBridgeV4,
+)
+    
+    
 from src.utils.twilio_account import TwilioAccount
 from src.utils import gcs as gcs_service
 
 import logging
+import http
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -43,19 +53,25 @@ templates_dir = Path(__file__).parent / "templates"
 templates_wav_dir = templates_dir / "wav"
 
 app = FastAPI()
-NGROK = os.environ["NGROK"]
+APP_URL = os.environ["APP_URL"]
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ENV = os.getenv("ENV")
 TENANT_ID = os.getenv("TENANT_ID")
 PROJECT_ID = os.getenv("PROJECT_ID")
-CUSTOMER_PHONE_NUMBER = os.getenv("CUSTOMER_PHONE_NUMBER")
 
+async def get_from_phone_number(client: Client, call_sid: str) -> str:
+    call = client.calls(call_sid).fetch()
+    return call._from
+
+async def get_to_phone_number(client: Client, call_sid: str) -> str:
+    call = client.calls(call_sid).fetch()
+    return call.to
 
 @app.post("/twiml")
 async def twiml():
     response = VoiceResponse()
     connect = Connect()
-    stream = Stream(url=f"wss://{NGROK}/ws")
+    stream = Stream(url=f"wss://{APP_URL}/ws")
     # response.say("お電話ありがとうございます。SHIFT渋谷店でございます。お電話のご用件をお話しください。", voice="alice", language="ja-JP")
 
     connect.append(stream)
@@ -68,13 +84,12 @@ async def twiml():
         headers={"Content-Type": "text/html"},
     )
 
-def init_conversation_events(firestore_client, call_sid):
+def init_conversation_events(firestore_client, call_sid, customer_phone_number):
     conversation_id = hashlib.sha1(call_sid.encode()).hexdigest()
     env = ENV
     tenant_id = TENANT_ID
-    customer_phone_number = CUSTOMER_PHONE_NUMBER
-    customer_id = hashlib.sha1(customer_phone_number.encode()).hexdigest()
     project_id = PROJECT_ID
+    customer_id = hashlib.sha1(customer_phone_number.encode()).hexdigest()
     
     customer_data = {
         "developer": False,
@@ -141,7 +156,6 @@ async def post_twilio2gcs(
     account_auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
     
     twilio_account = TwilioAccount(account_sid, account_auth_token)
-    tenant_id = str(request.query_params.get("tenant_id"))
     project_id = str(request.query_params.get("project_id"))
     customer_phone_number = str(
         request.query_params.get("customer_phone_number")
@@ -187,6 +201,26 @@ def delete_twilio_call_recording(
             f"Error in delete twilio recording file. {e}", stack_info=True
         )
         return None
+    
+async def initial_routing(asr_bridge): 
+    dialog_bridge_cls = None
+    pattern = None
+    transcription = asr_bridge.get_transcription()
+    if "1" in transcription or "一" in transcription:
+        dialog_bridge_cls = DialogBridgeV1
+        pattern = 1
+    elif "2" in transcription or "二" in transcription:
+        dialog_bridge_cls = DialogBridgeV2
+        pattern = 2
+    elif "3" in transcription or "三" in transcription:
+        dialog_bridge_cls = DialogBridgeV3
+        pattern = 3
+    elif "4" in transcription or "四" in transcription:
+        dialog_bridge_cls = DialogBridgeV4
+        pattern = 4
+    return dialog_bridge_cls, pattern
+
+    
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -205,20 +239,14 @@ async def websocket_endpoint(ws: WebSocket):
     
     asr_bridge = ASRBridge()
     tts_bridge = TTSBridge()
-    llm_bridge = LLMBridge()
-    # dialog_bridge = DialogBridge()
-    # dialog_bridge = DialogBridgeV2()
-    dialog_bridge = DialogBridgeV3()
+    llm_bridge = LLMBridge(system_prompt_for_faq)
     
     t_tts = threading.Thread(target=tts_bridge.response_loop)
     t_llm = threading.Thread(target=llm_bridge.response_loop)
     
     t_tts.start()
     t_llm.start()
-    
-    # llm_bridge.add_request("サンプル")
-    # response = llm_bridge.get_response()
-    
+ 
     import asyncio
 
     def start_async_loop(loop):
@@ -237,40 +265,94 @@ async def websocket_endpoint(ws: WebSocket):
     auth_token = twilio_account.auth_token
     custom_client = TwilioHttpClient(max_retries=3)
     client = Client(account_sid, auth_token, http_client=custom_client)
-    
-    firestore_client = FirestoreClient()
-    firestore_client = init_conversation_events(firestore_client, call_sid)
-    
-    dialog_bridge.set_stream_sid(stream_sid)
-    tts_bridge.set_connect_info(stream_sid)
-    tts_bridge.add_response("INITIAL")
-    first = [
-        0,
-        "お電話ありがとうございます。新規ご予約を承ります。"
-    ]
-    logger.info(f"Bot: {first[1]}")
-    
-    initial_event_data = {
-        "message": first[1],
-        "sender_type": "bot",
-        "entity": {},
-        "is_ivr": False,
-        "created_at": firestore_client.get_timestamp(),
-    }
-    event_id = firestore_client.add_conversation_event(initial_event_data)
-    logger.info(f"[firestore] Added initial event: {event_id}")
-    
-    _, out = tts_bridge.audio_queue.get()
-    await ws.send_text(out)
-    threading.Thread(target=asr_bridge.start).start()
+    aim_phone_number = await get_to_phone_number(client, call_sid)
+    customer_phone_number = await get_from_phone_number(client, call_sid)
+    logger.info(f"aim_phone_number: {aim_phone_number}, customer_phone_number: {customer_phone_number}")
     
     
-    recording_callback_url = f"https://{NGROK}/recording/twilio2gcs?project_id={PROJECT_ID}&tenant_id={TENANT_ID}&customer_phone_number={CUSTOMER_PHONE_NUMBER.replace('+', '')}#rc=2&rp=all"
+    recording_callback_url = f"https://{APP_URL}/recording/twilio2gcs?project_id={PROJECT_ID}&tenant_id={TENANT_ID}&customer_phone_number={customer_phone_number.replace('+', '')}#rc=2&rp=all"
     client.calls(call_sid).recordings.create(
         recording_status_callback=recording_callback_url,
         recording_status_callback_method="POST",
         recording_channels="dual",
     )
+
+    firestore_client = FirestoreClient()
+    firestore_client = init_conversation_events(firestore_client, call_sid, customer_phone_number)
+    
+    tts_bridge.set_connect_info(stream_sid)
+    
+    
+    ####  For initial routing  ####
+    tts_bridge.add_response("SELECT")
+    txt, out = tts_bridge.audio_queue.get()
+    txt = tts_label2text.get(txt, txt)
+    logger.info(f"Send Bot: {txt}")
+    event_data = {
+        "message": txt,
+        "sender_type": "bot",
+        "entity": {},
+        "is_ivr": False,
+        "created_at": firestore_client.get_timestamp(),
+    }
+    firestore_client.add_conversation_event(event_data)
+    await ws.send_text(out)
+    threading.Thread(target=asr_bridge.start).start()
+    dialog_pattern = None
+    while dialog_pattern is None:
+        data = await ws.receive_json()
+        if data["event"] == "media":
+            asr_bridge.add_request(base64.b64decode(data["media"]["payload"]))
+        dialog_bridge_cls, dialog_pattern = await initial_routing(asr_bridge)
+    asr_bridge.terminate()
+    asr_bridge = ASRBridge()
+    logger.info(f"ASR bridge reinitialized transcript {asr_bridge.transcription}")
+
+    dialog_bridge = dialog_bridge_cls()
+    dialog_bridge.set_stream_sid(stream_sid)
+ 
+    if dialog_pattern == 1 or dialog_pattern == 4:
+        llm_bridge_for_slot_filling = LLMBridge(system_prompt_for_slot_filling, json_format=True)
+        threading.Thread(target=llm_bridge_for_slot_filling.response_loop).start()
+    else:
+        llm_bridge_for_slot_filling = None
+
+    tts_bridge.add_response(f"対話パターン{dialog_pattern}が選択されました")
+    # txt, out = tts_bridge.audio_queue.get()
+    # logger.info(f"Send Bot: {txt}")
+    # event_data = {
+    #     "message": txt,
+    #     "sender_type": "bot",
+    #     "entity": {},
+    #     "is_ivr": False,
+    #     "created_at": firestore_client.get_timestamp(),
+    # }
+    # firestore_client.add_conversation_event(event_data)
+    await dialog_bridge.send_tts(ws, tts_bridge, firestore_client)
+    
+    #####################################
+
+    tts_bridge.add_response("INITIAL")
+    
+    # txt, out = tts_bridge.audio_queue.get()
+    # txt = tts_label2text.get(txt, txt)
+    # logger.info(f"Send Bot: {txt}")
+
+    # initial_event_data = {
+    #     "message": txt,
+    #     "sender_type": "bot",
+    #     "entity": {},
+    #     "is_ivr": False,
+    #     "created_at": firestore_client.get_timestamp(),
+    # }
+    # event_id = firestore_client.add_conversation_event(initial_event_data)
+    # logger.info(f"[firestore] Added initial event: {event_id}")
+    
+    # await ws.send_text(out)
+    dialog_bridge.send_tts(ws, tts_bridge, firestore_client)
+    threading.Thread(target=asr_bridge.start).start()
+    
+
     
     is_finished = False
     while ws.application_state == WebSocketState.CONNECTED:
@@ -291,6 +373,7 @@ async def websocket_endpoint(ws: WebSocket):
                 llm_bridge,
                 tts_bridge, 
                 firestore_client=firestore_client,
+                llm_bridge_for_slot_filling=llm_bridge_for_slot_filling,
             )
 
             if out["asr_done"]:
@@ -306,28 +389,39 @@ async def websocket_endpoint(ws: WebSocket):
         elif data["event"] == "mark" and data["mark"]["name"] == "continue":
             logger.info(f"Media WS: Received event 'mark': {data}")
             logger.info("Bot: Speaking is done")
-            # asr_bridge.reset()
+            asr_bridge.reset()
             dialog_bridge.bot_speak = False
             # 暗黙確認時にのみバージインを許可するため、botが話し終わったタイミングでバージインを毎回オフにする
             dialog_bridge.allow_barge_in = False 
             logger.info("set allow_barge_in to False")
-            # asr_bridge.set_bot_speak(False)
-            # dialog_bridge.bot_speak = False
-            # asr_bridge.terminate()
-            # asr_bridge = ASRBridge()
-            # threading.Thread(target=asr_bridge.start).start()
             if is_finished:
                 break
         elif data["event"] == "mark" and data["mark"]["name"] == "finish":
-            logger.info(f"Media WS: Received event 'finish': {data}")
             is_finished = True
         else:
             raise "Media WS: Received unknown event"
         
-        
-
     logger.info("Media WS: Connection closed")
     asr_bridge.terminate()
     # t_tts.join()
 
     logger.info("WS connection completedly closed")
+    # disconnect twilio call
+    try:
+        client.calls(call_sid).update(
+            twiml=twiml,
+            status=CallInstance.UpdateStatus.COMPLETED,
+        )
+    except twilio_exceptions.TwilioRestException as e:
+        logger.warning(f"Could not update CallContext because '{e}'")
+    except http.client.RemoteDisconnected as e:
+        logger.warning(
+            f"Updating CallContext is RemoteDisconnected. Error is '{e}'"
+        )
+        try:
+            client.calls(call_sid).update(twiml=twiml, status=CallInstance.UpdateStatus.COMPLETED)
+        except http.client.RemoteDisconnected as e:
+            logger.error(
+                f"Updating CallContext is twice RemoteDisconnected. Error is '{e}'"
+            )
+            raise e

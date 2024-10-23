@@ -6,21 +6,17 @@ from src.utils import get_custom_logger
 logger = get_custom_logger(__name__)
 
 # 基準日を現在の日付に設定
-today = datetime.today()
+# today = datetime.today()
+today = datetime(2024, 10, 23)
 
 # 相対的な時間表現の辞書
 relative_time_dict = {
-    '一昨日': -2,
-    '昨日': -1,
     '今日': 0,
     '明日': 1,
     '明後日': 2,
     '来週': 7,
     '再来週': 14,
-    '先週': -7,
-    '先々週': -14,
     '来月': 'next_month',
-    '先月': 'previous_month',
 }
 
 # 曜日のマッピング
@@ -51,21 +47,29 @@ def process_date(text):
         logger.debug("date_info: %s", date_info)
         target_date = today
 
+        # 絶対的な月と日（例: 10月の25日, 10月の25）
+        if date_info.get('absolute_month_no_day') and date_info.get('absolute_day_no_month'):
+            month = int(date_info['absolute_month_no_day'])
+            day = int(date_info['absolute_day_no_month'])
+            year = target_date.year
+            # 日付が過去の場合、翌年とする
+            if month < target_date.month or (month == target_date.month and day <= target_date.day):
+                year += 1
+            target_date = datetime(year, month, day)
         # 相対的な月と週と曜日（例: 来月の1週目の水曜日）
-        if date_info.get('relative_month_ext') and date_info.get('week_number') and date_info.get('extended_weekday'):
+        elif date_info.get('relative_month_ext') and date_info.get('week_number') and date_info.get('extended_weekday'):
             relative_month_ext = date_info['relative_month_ext']
             week_number = int(date_info['week_number'])
             extended_weekday = date_info['extended_weekday']
             
-            if relative_month_ext == '先月':
-                months_offset = -1
-            elif relative_month_ext == '今月':
+            if relative_month_ext == '今月':
                 months_offset = 0
             elif relative_month_ext == '来月':
                 months_offset = 1
             elif relative_month_ext == '再来月':
                 months_offset = 2
-            
+            else:
+                months_offset = 0
             target_weekday = day_of_week_map[extended_weekday]
             
             # 月を調整
@@ -93,17 +97,13 @@ def process_date(text):
         elif date_info.get('relative_week'):
             relative_week = date_info['relative_week']
             weekday = date_info.get('weekday')
-            if relative_week == '先々週':
-                target_date -= timedelta(weeks=2)
-            elif relative_week == '先週':
-                target_date -= timedelta(weeks=1)
-            elif relative_week == '今週':
+            if relative_week == '今週':
                 pass  # 何もしない
             elif relative_week == '来週':
                 target_date += timedelta(weeks=1)
             elif relative_week == '再来週':
                 target_date += timedelta(weeks=2)
-            
+
             if weekday:
                 logger.debug("weekday: %s", weekday)
                 target_weekday = day_of_week_map[weekday]
@@ -121,9 +121,7 @@ def process_date(text):
         elif date_info.get('relative_month') and date_info.get('relative_day_number'):
             relative_month = date_info['relative_month']
             months_offset = 0
-            if relative_month == '先月':
-                months_offset = -1
-            elif relative_month == '今月':
+            if relative_month == '今月':
                 months_offset = 0
             elif relative_month == '来月':
                 months_offset = 1
@@ -226,12 +224,14 @@ if __name__ == "__main__":
         "3時45分に出発しましょう。"
         "再来週の日曜日に3名での会議があります。",
         "1月15日に3人で会食をしましょう。",
+        "2月の25に5人で会議をしましょう。",
     ]
     for text in test_text_list:
         # 関数の実行
         formatted_dates = process_date(text)
         formatted_times = process_time(text)
         formatted_n_person = process_n_person(text)
+        logger.info("text: %s", text)
         logger.info("formatted_dates: %s", formatted_dates)
         logger.info("formatted_times: %s", formatted_times)
         logger.info("formatted_n_person: %s", formatted_n_person)

@@ -1,39 +1,21 @@
 import re
-from datetime import datetime, timedelta, time as dt_time
-from src.nlu.regular_expression import date_regex, time_regex, n_person_regex
-from src.utils import setup_custom_logger
-from dataclasses import dataclass
-from typing import List
+from datetime import datetime, timedelta
+from src.modules.nlu.regular_expression import date_regex, time_regex, n_person_regex
+from src.utils import get_custom_logger
 
-logger = setup_custom_logger(__name__)
+logger = get_custom_logger(__name__)
+
 # 基準日を現在の日付に設定
 today = datetime.today()
 
-# 営業時間を表すデータクラス
-@dataclass
-class TimeSegment:
-    start: dt_time
-    end: dt_time
-
-# サンプルの営業時間セグメント（例: 11時から15時、17時から23時）
-business_hours = [
-    TimeSegment(start=dt_time(11, 0), end=dt_time(15, 0)),
-    TimeSegment(start=dt_time(17, 0), end=dt_time(23, 0)),
-]
-
 # 相対的な時間表現の辞書
 relative_time_dict = {
-    '一昨日': -2,
-    '昨日': -1,
     '今日': 0,
     '明日': 1,
     '明後日': 2,
     '来週': 7,
     '再来週': 14,
-    '先週': -7,
-    '先々週': -14,
     '来月': 'next_month',
-    '先月': 'previous_month',
 }
 
 # 曜日のマッピング
@@ -61,23 +43,23 @@ def process_date(text):
     if match:
         date_info = match.groupdict()
         logger.debug("date_info: %s", date_info)
-        target_date = today
+        target_date = None  # target_dateを初期化
 
         # 相対的な月と週と曜日（例: 来月の1週目の水曜日）
         if date_info.get('relative_month_ext') and date_info.get('week_number') and date_info.get('extended_weekday'):
+            target_date = today
             relative_month_ext = date_info['relative_month_ext']
             week_number = int(date_info['week_number'])
             extended_weekday = date_info['extended_weekday']
             
-            if relative_month_ext == '先月':
-                months_offset = -1
-            elif relative_month_ext == '今月':
+            if relative_month_ext == '今月':
                 months_offset = 0
             elif relative_month_ext == '来月':
                 months_offset = 1
             elif relative_month_ext == '再来月':
                 months_offset = 2
-            
+            else:
+                months_offset = 0
             target_weekday = day_of_week_map[extended_weekday]
             
             # 月を調整
@@ -98,41 +80,35 @@ def process_date(text):
 
         # 相対的な日付（例: 今日、明日、一昨日など）
         elif date_info.get('relative_day'):
+            target_date = today
             days_offset = relative_time_dict[date_info['relative_day']]
             target_date += timedelta(days=days_offset)
         
-        # 相対的な週と曜日
-        elif date_info.get('relative_week'):
+        # 相対的な週と曜日（例: 来週の水曜日）
+        elif date_info.get('relative_week') and date_info.get('weekday'):
+            target_date = today
             relative_week = date_info['relative_week']
             weekday = date_info.get('weekday')
-            if relative_week == '先々週':
-                target_date -= timedelta(weeks=2)
-            elif relative_week == '先週':
-                target_date -= timedelta(weeks=1)
-            elif relative_week == '今週':
+            if relative_week == '今週':
                 pass  # 何もしない
             elif relative_week == '来週':
                 target_date += timedelta(weeks=1)
             elif relative_week == '再来週':
                 target_date += timedelta(weeks=2)
-            
-            if weekday:
-                logger.debug("weekday: %s", weekday)
-                target_weekday = day_of_week_map[weekday]
-                diff_weak_day = target_weekday - target_date.weekday()
-                logger.debug("diff_weak_day: %s", diff_weak_day)
-                days_ahead = (diff_weak_day + 7) % 7
-                if diff_weak_day < 0:
-                    days_ahead = days_ahead - 7
-                target_date += timedelta(days=days_ahead)
 
+            logger.debug("weekday: %s", weekday)
+            target_weekday = day_of_week_map[weekday]
+            diff_week_day = target_weekday - target_date.weekday()
+            logger.debug("diff_week_day: %s", diff_week_day)
+            days_ahead = diff_week_day % 7
+            target_date += timedelta(days=days_ahead)
+        
         # 相対的な月と日（例: 来月の15日）
         elif date_info.get('relative_month') and date_info.get('relative_day_number'):
+            target_date = today
             relative_month = date_info['relative_month']
             months_offset = 0
-            if relative_month == '先月':
-                months_offset = -1
-            elif relative_month == '今月':
+            if relative_month == '今月':
                 months_offset = 0
             elif relative_month == '来月':
                 months_offset = 1
@@ -147,6 +123,7 @@ def process_date(text):
 
         # 絶対的な月と日（例: 12月25日）
         elif date_info.get('absolute_month') and date_info.get('absolute_day'):
+            target_date = today
             month = int(date_info['absolute_month'])
             day = int(date_info['absolute_day'])
             year = target_date.year
@@ -157,35 +134,21 @@ def process_date(text):
         
         # 曜日のみ（例: 月曜日）
         elif date_info.get('weekday_only'):
+            target_date = today
             target_weekday = day_of_week_map[date_info['weekday_only']]
             days_ahead = (target_weekday - target_date.weekday() + 7) % 7
             if days_ahead == 0:
                 days_ahead += 7  # 次の週の同じ曜日
             target_date += timedelta(days=days_ahead)
 
-
-        # 時刻の解析を無視
-        finalized_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        results[match.group()] = finalized_date.strftime('%m/%d')
+        # target_dateが設定されている場合のみ結果に追加
+        if target_date:
+            finalized_date = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            results[match.group()] = finalized_date.strftime('%m/%d')
 
     return results
 
-def is_valid_time(hour: int, minute: int, segments: List[TimeSegment]) -> bool:
-    """時間が営業時間内にあるかどうかを検証する。
-    Args:
-        hour (int): 時の部分
-        minute (int): 分の部分
-        segments (List[TimeSegment]): 営業時間のセグメント
-    Returns:
-        bool: 営業時間内であればTrue、そうでなければFalse
-    """
-    check_time = dt_time(hour, minute)
-    for segment in segments:
-        if segment.start <= check_time <= segment.end:
-            return True
-    return False
-
-def process_time(text, segments: List[TimeSegment]):
+def process_time(text):
     results = {}
     for match in time_regex.finditer(text):
         time_info = match.groupdict()
@@ -204,16 +167,10 @@ def process_time(text, segments: List[TimeSegment]):
                     hour += 12
                 elif time_of_day in ['午前', '朝'] and hour == 12:
                     hour = 0
-            
-            if not is_valid_time(hour, minute, segments):
-                formatted_time = None
-            else:
-                formatted_time = f'{hour:02}:{minute:02}'
-            
+            formatted_time = f'{hour:02}:{minute:02}'
             results[match.group()] = formatted_time
 
     return results
-
 
 def process_n_person(text) -> int | None:
     """人数を表す文字列から数値を取得する
@@ -255,13 +212,16 @@ if __name__ == "__main__":
         "10時半にお会いしましょう。",
         "3時45分に出発しましょう。",
         "再来週の日曜日に3名での会議があります。",
+        "1月15日に3人で会食をしましょう。",
+        "来週会議をします。",  # 具体的な曜日がないため日付を特定できない
+        "再来週に出張があります。",  # 具体的な曜日がないため日付を特定できない
     ]
-    
     for text in test_text_list:
         # 関数の実行
         formatted_dates = process_date(text)
-        formatted_times = process_time(text, business_hours)
+        formatted_times = process_time(text)
         formatted_n_person = process_n_person(text)
+        logger.info("text: %s", text)
         logger.info("formatted_dates: %s", formatted_dates)
         logger.info("formatted_times: %s", formatted_times)
         logger.info("formatted_n_person: %s", formatted_n_person)
@@ -269,5 +229,3 @@ if __name__ == "__main__":
             print(f"『{expression}』は {date} です。")
         for expression, time in formatted_times.items():
             print(f"『{expression}』は {time} に変換されました。")
-        if formatted_n_person is not None:
-            print(f"人数は {formatted_n_person} 名です。")

@@ -20,7 +20,7 @@ NO = "いいえ"
 SAMPLE_RATE = 8000
 VOLUME_THRESHOLD = 1000
 FAST_SPEECH_END_THRESHOLD = 20
-SLOW_SPEECH_END_THRESHOLD = 100
+SLOW_SPEECH_END_THRESHOLD = 80
 
 BARGE_IN_UTTERANCE = [
     "DATE_1",
@@ -52,6 +52,7 @@ class DialogBridge:
         self.bot_speak = False
         
         self.is_final = False
+        self.slots = self.streaming_nlu.slot_states
         
     def set_stream_sid(self, stream_sid):
         self.stream_sid = stream_sid
@@ -64,9 +65,24 @@ class DialogBridge:
         if chunk != "/w==":
             self.streaming_vad.update_vad_status(chunk)
         
-    def turn_taking(self, asr_bridge):
-        if asr_bridge._ended:
+    def turn_taking(self):
+        logger.debug(
+            (f"is_got_entity: {self.got_entity} " 
+             f"is_slot_filled: {self.is_slot_filled} "
+             f"is_terminal: {self.is_terminal_form_detected} "
+             f"is_fast_speech_end: {self.is_fast_speech_end} "
+             f"is_slow_speech_end: {self.is_slow_speech_end} "
+             f"pre_text: {self.pre_text}")
+            )
+
+        if ((self.is_terminal_form_detected and self.is_fast_speech_end)
+            or (self.is_slot_filled and self.is_fast_speech_end)
+            or (self.is_slow_speech_end and self.pre_text != "")):
             return TurnTakingStatus.END_OF_TURN
+        elif self.got_entity and self.is_fast_speech_end:
+            return TurnTakingStatus.BACKCHANNEL
+        else:
+            return TurnTakingStatus.CONTINUE
 
     def reset_turn_taking_status(self):
         self.streaming_nlu.init_state()
@@ -76,10 +92,6 @@ class DialogBridge:
     @property
     def is_slot_filled(self):
         return self.streaming_nlu.is_slot_filled
-
-    @property
-    def slots(self):
-        return self.streaming_nlu.slot_states
     
     @property
     def is_no_slots(self):
@@ -157,10 +169,10 @@ class DialogBridge:
                         "mark": {"name": "continue"}
                     })), timeout=2)
                 self.bot_speak = True
-                    
         except asyncio.TimeoutError:
             pass
         
+        if not 
 
 
     def get_respose(self, transcription: str, nlu_output: dict):
@@ -170,21 +182,18 @@ class DialogBridge:
             response = self.nlg.get_confirm_response(self.dst.state_stack[-1][0], YES)  # 最終確認応答を生成
             self.awaiting_final_confirmation = False
             self.waiting_for_confirmation = False
-            self.is_final = True
         else:
             nlu_output = {"action_type": "新規予約", "slot": nlu_output} if not self.dst.state_stack else {"action_type": "", "slot": nlu_output}
             # DST状態更新
-            prev_state = deepcopy(self.dst.state_stack[-1][1]) if self.dst.state_stack else self.dst.initial_state
             self.dst.update_state(nlu_output)
 
             # 暗黙確認応答生成
-            implicit_confirmation = self.nlg.get_confirmation_response(self.dst.state_stack[-1], prev_state)
+            # implicit_confirmation = self.nlg.get_confirmation_response(self.dst.state_stack[-1], prev_state)
             response = self.nlg.get_response(self.dst.state_stack[-1])
             if isinstance(response, tuple):
                 response = response[1] # DATA_1など
-            if implicit_confirmation:
-                response_list.append(implicit_confirmation)
-                logger.info("set allow_barge_in to True")
+            # if implicit_confirmation:
+            #     response_list.append(implicit_confirmation)
 
             # 状態確認して全てのスロットが埋まっているかチェック
             if self.dst.is_complete() and not self.waiting_for_confirmation:
@@ -196,26 +205,15 @@ class DialogBridge:
 
     async def __call__(self, ws, asr_bridge, llm_bridge, tts_bridge, **kwargs):
         firestore_client = kwargs.get("firestore_client")
+        llm_bridge_for_slot_filling = kwargs.get("llm_bridge_for_slot_filling")
         if self.stream_sid is None:
             raise ValueError("stream_sid is None")
 
-        asr_bridge.set_stability_threshold(0.85)
-        turn_taking_status = self.turn_taking(asr_bridge)
+        turn_taking_status = self.turn_taking()
 
         resp = []
         asr_done = False
         
-        # # 1. LLMの応答を待っている場合は、まず応答を取得する
-        # if self.wait_for_llm:
-        #     resp = await self.get_llm_response(llm_bridge)
-        #     for r in resp:
-        #         if r != "":
-        #             logger.info(f"Bot: {r}")
-        #             tts_bridge.add_response(r)
-        #     asr_done = True  # LLMの応答を得たので、ASRの処理は完了とする
-        
-
-        # 2. LLMの応答を待っていない場合は、通常の処理を行う
         if turn_taking_status == TurnTakingStatus.END_OF_TURN:
             transcription = asr_bridge.get_transcription()
             
@@ -225,14 +223,24 @@ class DialogBridge:
                 logger.info("Transcription reset because of bot_speak")
                 asr_bridge.reset()
 
-            self.nlu_step(transcription)
-
+            llm_slot_filling_resp = None
+            if transcription != "":
+                logger.info(f"Add request to llm bridge for slot filling: {transcription}")
+                llm_bridge_for_slot_filling.add_request(transcription)
+                # tts_bridge.add_response("LLM_FILLER")
+                # await self.send_tts(ws, tts_bridge, firestore_client)
+                while llm_slot_filling_resp is None:
+                    llm_slot_filling_resp = llm_bridge_for_slot_filling.get_response()
+                self.slots = json.loads(llm_slot_filling_resp)
+                logger.info(f"Slots: {self.slots}")
+                self.bot_speak = False
+            
             if not self.wait_for_llm and self.is_no_slots and transcription != "" and (not YES in transcription or NO in transcription):
-                tts_bridge.add_response("FILLER")
                 logger.info("FAQ response")
                 llm_bridge.add_request(transcription)
+                tts_bridge.add_response("FILLER")
                 self.wait_for_llm = True
-            await self.send_tts(ws, tts_bridge, firestore_client)
+                await self.send_tts(ws, tts_bridge, firestore_client)
         
             if self.bot_speak:
                 resp = []

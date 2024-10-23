@@ -2,6 +2,7 @@ import re
 
 # 正規表現パターン
 date_patterns = [
+    
     # 相対的な月の週と曜日（例：'再来月3週目の金曜日'）
     r'(?P<relative_month_ext>先月|今月|来月|再来月)の?(?P<week_number>\d{1})(週目)の?(?P<extended_weekday>月曜日|火曜日|水曜日|木曜日|金曜日|土曜日|日曜日|月曜|火曜|水曜|木曜|金曜|土曜|日曜)',
     
@@ -15,7 +16,7 @@ date_patterns = [
     r'(?P<relative_month>先月|今月|来月|再来月)の?(?P<relative_day_number>\d{1,2})日?',
     
     # 絶対的な月と日（例：'12月25日'）
-    r'(?P<absolute_month>\d{1,2})月(?P<absolute_day>\d{1,2})日?',
+    r'(?P<absolute_month>\d{1,2})月の?(?P<absolute_day>\d{1,2})日?',
     
     # 曜日のみ（例：'金曜日'）
     r'(?P<weekday_only>月曜日|火曜日|水曜日|木曜日|金曜日|土曜日|日曜日|月曜|火曜|水曜|木曜|金曜|土曜|日曜)',

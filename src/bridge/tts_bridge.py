@@ -3,7 +3,6 @@ import json
 import queue
 import requests
 import base64
-import pydub
 import audioop
 import numpy as np
 from pydub import AudioSegment
@@ -19,7 +18,7 @@ import azure.cognitiveservices.speech as speechsdk
 from abc import abstractmethod
 
 from src.utils import get_custom_logger
-from src.modules.dialogue.utils.template import tts_text4log
+from src.modules.dialogue.utils.template import tts_label2text
 
 logger = get_custom_logger(__name__)
 
@@ -218,7 +217,7 @@ class AzureTTSBridge(BaseTTSBridge):
     def get_template_audio(self, text):
         flag = False
         audiofile_candidates = list(template_dir.glob(f"{text.lower()}*.wav"))
-        text = tts_text4log(text)
+        # text = tts_label2text.get(text, text)
         logger.info(f"audiofile_candidates: {audiofile_candidates}") 
         if len(audiofile_candidates) > 0:
             audiofile = random.choice(audiofile_candidates)

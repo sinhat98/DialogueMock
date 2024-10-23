@@ -9,7 +9,7 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore import Client, SERVER_TIMESTAMP
 from src.utils import ROOT_DIR, get_custom_logger
 from dotenv import load_dotenv
-
+from google.oauth2.service_account import Credentials
 
 
 load_dotenv()
@@ -21,7 +21,7 @@ logger = get_custom_logger(__name__)
 class FirestoreClient:
     """Firestoreに接続し、対話ログを管理するためのクラス"""
 
-    def __init__(self, credential_path: Optional[str] = None):
+    def __init__(self):
         """
         コンストラクタ。Firestoreクライアントを初期化する。
 
@@ -29,18 +29,26 @@ class FirestoreClient:
             credential_path (Optional[str]): サービスアカウント鍵のパス。環境変数で設定されていない場合に使用。
         """
         if not firebase_admin._apps:
-            if credential_path is None:
-                credential_path = ROOT_DIR / os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-            if credential_path is not None:
-                with open(credential_path) as f:
-                    cred = credentials.Certificate(json.load(f))
-                firebase_admin.initialize_app(credential=cred)
+            credential = self.get_credentials()
+            if credential is not None:
+                firebase_admin.initialize_app(credential)
             else:
-                # アプリデフォルトの認証情報を使用
                 firebase_admin.initialize_app()
+        
         self.client: Client = firestore.client()
         self.conversation_ref = None
+    
+    def get_credentials(self) -> Credentials:
+        credential_path = os.environ.get(
+            "GOOGLE_APPLICATION_CREDENTIALS", None
+        )
+        return (
+            Credentials.from_service_account_file(credential_path)
+            if credential_path is not None
+            else None
+        )
         
+    
     def get_timestamp(self):
         return SERVER_TIMESTAMP
 

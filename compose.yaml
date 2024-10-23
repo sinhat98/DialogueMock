@@ -1,25 +1,13 @@
 services:
   voice-app:
-    image: asia-northeast1-docker.pkg.dev/cyberagent-285/dev-aim-voice/voice-app:latest
+    image: asia-northeast1-docker.pkg.dev/cyberagent-285/dialogue-demo/dialogue_demo_image:latest
     platform: linux/amd64
     build:
-      context: ./mod/voice_app
+      context: .
       cache_from:
-        - asia-northeast1-docker.pkg.dev/cyberagent-285/dev-aim-voice/voice-app:latest
-    command: honcho -f Procfile.dev start app --no-prefix --no-colour
-    volumes:
-      - "./ai-keymaps/cyberagent-285-03dff0795e3a.json:/cyberagent-285-03dff0795e3a.json"
+        - asia-northeast1-docker.pkg.dev/cyberagent-285/dialogue-demo/dialogue_demo_image:latest
+    command: uvicorn main:app --host 0.0.0.0 --port 8888
     ports:
       - "8080:8080"
     env_file:
-      - ./mod/voice_app/.env
-    links:
-      - db
-  db:
-    image: "gcr.io/cloudsql-docker/gce-proxy:1.16"
-    platform: "linux/amd64"
-    command: [ "./cloud_sql_proxy", "-instances=cyberagent-285:asia-northeast1:aim-dev-master-rdb=tcp:0.0.0.0:3308", "-credential_file=./cyberagent-285-03dff0795e3a.json" ]
-    volumes:
-      - "./ai-keymaps/cyberagent-285-03dff0795e3a.json:/cyberagent-285-03dff0795e3a.json"
-    ports:
-      - "3308:3308"
+      - .env
