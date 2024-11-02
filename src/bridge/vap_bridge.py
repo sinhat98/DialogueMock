@@ -44,83 +44,75 @@ class VAPBridge:
 
     def get_vap_result(self):
         return self.vap_result
-
-    async def send_audio_chunks_loop(self):
-        async with websockets.connect(self.ws_address) as websocket:
-            logger.info("Connected to VAP server")
-            while not self._ended:
-                chunk = self.collect_audio_chunk()
-                if chunk is None:
-                    break
-
-                current_x1, current_x2 = self.format_chunk(chunk)
-                await self.send_audio_chunk(websocket, current_x1, current_x2)
-                
-                # Process received VAP results
-                self.vap_result = await self.receive_vap_result(websocket)
-                logger.info(f"VAP Result: {self.vap_result}")
-
-            # Close the WebSocket connection
-            await websocket.close()
-
-    def collect_audio_chunk(self):
-        while not self._ended:
-            chunk = self._queue.get()
-            if chunk is None:
-                return None
-            data = [chunk]
-
-            while True:
-                try:
-                    chunk = self._queue.get(block=False)
-                    if chunk is None:
-                        return None
-                    data.append(chunk)
-                except queue.Empty:
-                    break
-            return b"".join(data)
-
-    def format_chunk(self, chunk):
-        current_x1 = np.zeros(self.vap.frame_contxt_padding)
-        current_x2 = np.zeros(self.vap.frame_contxt_padding)
-        # Here, you should implement the logic to format the raw audio chunk to x1 and x2
-        # which you will send to VAP server
-        return current_x1, current_x2
-
-    async def send_audio_chunk(self, websocket, current_x1, current_x2):
-        try:
-            data_sent = util.conv_2floatarray_2_bytearray(current_x1, current_x2)
-            await websocket.send(data_sent)
-            logger.info("Sent audio chunk to VAP server")
-        except Exception as e:
-            logger.error(f"Error sending audio chunk: {e}")
-
-    async def receive_vap_result(self, websocket):
-        try:
-            data_received = await websocket.recv()
-            vap_result = util.conv_bytearray_2_vapresult(data_received)
-            logger.info("Received VAP result from server")
-            return vap_result
-        except Exception as e:
-            logger.error(f"Error receiving VAP result: {e}")
-            return None
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--vap_model", type=str, default=VAP_MODEL_PATH)
-    parser.add_argument("--cpc_model", type=str, default=CPC_MODEL_PATH)
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--vap_process_rate", type=int, default=10)
-    parser.add_argument("--context_len_sec", type=float, default=5)
-    parser.add_argument("--gpu", action='store_true')
-    args = parser.parse_args()
-
-    device = torch.device('cuda' if args.gpu and torch.cuda.is_available() else 'cpu')
-    vap_bridge = VAPBridge(args.vap_model, args.cpc_model, device, args.vap_process_rate, args.context_len_sec, args.port)
     
-    try:
-        vap_bridge.start()
-    except Exception as e:
-        logger.error(f"An error occurred: {e}")
+    def response_loop(self):
+                # VAPモデルの読み込み
+        encoder = EncoderCPC()
+        transformer = TransformerStereo()
+        model = VAP(encoder, transformer)
+        ckpt = torch.load(self.model_name, map_location=device)['state_dict']
+        restored_ckpt = {}
+        for k,v in ckpt.items():
+            restored_ckpt[k.replace('model.', '')] = v
+        model.load_state_dict(restored_ckpt)
+        model.eval()
+        model.to(device)
+        sys.stderr.write('Load VAP model: %s\n' % (self.model_name))
+        sys.stderr.write('Device: %s\n' % (device))
+        
+        s_threshold = self.threshold
+        u_threshold = 1 - self.threshold
+        while True:
+            # 両話者のデータを結合してバッチを作成
+            ss_audio = torch.Tensor(self.ss_audio_buffer)
+            us_audio = torch.Tensor(self.us_audio_buffer)
+            input_audio = torch.stack((ss_audio, us_audio))
+            input_audio = input_audio.unsqueeze(0)
+            batch = torch.Tensor(input_audio)
+            batch = batch.to(device)
+
+            # 推論
+            out = model.probs(batch)
+            #print(out['vad'].shape,
+            #      out['p_now'].shape,
+            #      out['p_future'].shape,
+            #      out['probs'].shape,
+            #      out['H'].shape)
+
+            # 結果の取得
+            p_ns = out['p_now'][0, :].cpu()
+            p_fs = out['p_future'][0, :].cpu()
+            vad_result = out['vad'][0, :].cpu()
+
+            # 最終フレームの結果を判定に利用
+            score_n = p_ns[-1].item()
+            score_f = p_fs[-1].item()
+            score_v = vad_result[-1]
+
+            # イベントの判定
+            event = None
+            if score_n >= self.threshold and score_f >= self.threshold:
+                event = 'SYSTEM_TAKE_TURN'
+            if score_n < self.threshold and score_f < self.threshold:
+                event = 'USER_TAKE_TURN'
+
+            # メッセージの発出
+            # 可視化用スコア
+            score = {'p_now': score_n,
+                     'p_future': score_f}
+            snd_iu = self.createIU(score, 'score',
+                                   RemdisUpdateType.ADD)
+            self.publish(snd_iu, 'score')
+
+            # 変化があった時のみイベントを発出
+            if event and event != self.prev_event:
+                snd_iu = self.createIU(event, 'vap',
+                                       RemdisUpdateType.ADD)
+                print('n:%.3f, f:%.3f, %s' % (score_n,
+                                              score_f,
+                                              event))
+                self.publish(snd_iu, 'vap')
+                self.prev_event = event
+            else:
+                print('n:%.3f, f:%.3f' % (score_n,
+                                          score_f))

@@ -93,14 +93,6 @@ class VapGPT(nn.Module):
         self.frame_hz = conf.frame_hz
 
         self.temp_elapse_time = []
-        
-        # elif self.conf.encoder_type == "wav2vec2":
-        #     from vap.customwav2vec2 import W2V2Transformers
-        #     self.encoder = W2V2Transformers(model_type=self.conf.wav2vec_type)
-        
-        # elif self.conf.encoder_type == "hubert":
-        #     from vap.customhubert import HubertEncoder
-        #     self.encoder = HubertEncoder(model_type= self.conf.hubert_model)
 
         # Single channel
         self.ar_channel = GPT(
