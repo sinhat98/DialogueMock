@@ -29,11 +29,17 @@ class FirestoreClient:
             credential_path (Optional[str]): サービスアカウント鍵のパス。環境変数で設定されていない場合に使用。
         """
         if not firebase_admin._apps:
-            credential = self.get_credentials()
-            if credential is not None:
-                firebase_admin.initialize_app(credential)
-            else:
-                firebase_admin.initialize_app()
+            credential_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", None)
+            if credential_path is not None:
+                with open(credential_path) as f:
+                    cred = credentials.Certificate(json.load(f))
+                firebase_admin.initialize_app(credential=cred)
+            # credential = self.get_credentials()
+            # if credential is not None:
+            #     logger.info(f"Use service account credential file. {credential}")
+            #     firebase_admin.initialize_app(credential)
+            # else:
+            #     firebase_admin.initialize_app()
         
         self.client: Client = firestore.client()
         self.conversation_ref = None

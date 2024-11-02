@@ -331,6 +331,34 @@ class DialogBridgeWithLLMSF(DialogBridge):
             llm_slot_filling_resp = llm_bridge_for_slot_filling.get_response()
         self.slots = json.loads(llm_slot_filling_resp)
         
+class DialogBridgeWithminiLLMSF(DialogBridge):
+    def __init__(self, default_state: dict = {}):
+        super().__init__(default_state=default_state)
+        self.use_implied_confirmation = True
+    
+    def turn_taking(self, *args):
+        asr_bridge = args[0]
+        asr_bridge.set_stability_threshold(0.85)
+        
+        if asr_bridge._ended:
+            return TurnTakingStatus.END_OF_TURN
+        else:
+            return TurnTakingStatus.CONTINUE
+    
+    async def update_slots(self, transcription: str, *args):
+        llm_bridge_for_slot_filling = args[0]
+        tts_bridge = args[1]
+        firestore_client = args[2]
+        ws = args[3]
+        llm_slot_filling_resp = None
+        logger.info(f"Add request to llm bridge for slot filling: {transcription}")
+        llm_bridge_for_slot_filling.add_request(transcription)
+        # tts_bridge.add_response("LLM_FILLER")
+        # await self.send_tts(ws, tts_bridge, firestore_client)
+        while llm_slot_filling_resp is None:
+            llm_slot_filling_resp = llm_bridge_for_slot_filling.get_response()
+        self.slots = json.loads(llm_slot_filling_resp)
+        
 class DialogBridgeWithLLMSFAndVolumeBasedEoT(DialogBridge):
     def __init__(self, default_state: dict = {}):
         super().__init__(default_state=default_state)
@@ -388,6 +416,8 @@ class DialogBridgeWithFastSF(DialogBridge):
     async def update_slots(self, transcription: str, *args):
         self.nlu_step(transcription)
         self.slots = self.streaming_nlu.slot_states
+        
+
         
 
 class DialogBridgeWithFastSFAndVolumeBasedEoT(DialogBridge):

@@ -22,7 +22,7 @@ class LLMBridge:
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
         self.client = AzureOpenAI(
             api_key=api_key,
-            api_version="2024-02-01",
+            api_version="2024-06-01",
             azure_endpoint=endpoint,
         )
 
@@ -57,7 +57,7 @@ class LLMBridge:
     def call_llm(self, text):
         if self.json_format:
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 response_format={"type":"json_object"},
                 messages=[
                     {
@@ -72,7 +72,7 @@ class LLMBridge:
             )
         else:
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=[
                     {
                         "role": "system",

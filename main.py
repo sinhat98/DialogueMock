@@ -25,6 +25,7 @@ from src.bridge.dialog_bridge import (
     DialogBridgeWithFastSF as DialogBridgeV2,
     DialogBridgeWithFastSFAndVolumeBasedEoT as DialogBridgeV3,
     DialogBridgeWithLLMSFAndVolumeBasedEoT as DialogBridgeV4,
+    DialogBridgeWithminiLLMSF as DialogBridgeV5,
 )
     
     
@@ -218,6 +219,9 @@ async def initial_routing(asr_bridge):
     elif "4" in transcription or "四" in transcription:
         dialog_bridge_cls = DialogBridgeV4
         pattern = 4
+    elif "5" in transcription or "五" in transcription:
+        dialog_bridge_cls = DialogBridgeV5
+        pattern = 5
     return dialog_bridge_cls, pattern
 
     
@@ -261,6 +265,7 @@ async def websocket_endpoint(ws: WebSocket):
     stream_sid = data["start"]["streamSid"]
     call_sid = data["start"]["callSid"]
     account_sid = data["start"]["accountSid"]
+    logger.info(f"stream_sid: {stream_sid}, call_sid: {call_sid}, account_sid: {account_sid}")
     twilio_account = TwilioAccount(account_sid, os.environ.get("TWILIO_AUTH_TOKEN"))
     auth_token = twilio_account.auth_token
     custom_client = TwilioHttpClient(max_retries=3)
@@ -281,7 +286,7 @@ async def websocket_endpoint(ws: WebSocket):
     firestore_client = init_conversation_events(firestore_client, call_sid, customer_phone_number)
     
     tts_bridge.set_connect_info(stream_sid)
-    
+    logger.info("Set connect info")
     
     ####  For initial routing  ####
     tts_bridge.add_response("SELECT")
@@ -311,7 +316,7 @@ async def websocket_endpoint(ws: WebSocket):
     dialog_bridge = dialog_bridge_cls()
     dialog_bridge.set_stream_sid(stream_sid)
  
-    if dialog_pattern == 1 or dialog_pattern == 4:
+    if dialog_pattern == 1 or dialog_pattern == 4 or dialog_pattern == 5:
         llm_bridge_for_slot_filling = LLMBridge(system_prompt_for_slot_filling, json_format=True)
         threading.Thread(target=llm_bridge_for_slot_filling.response_loop).start()
     else:

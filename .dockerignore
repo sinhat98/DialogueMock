@@ -1,0 +1,21 @@
+
+# 除外するファイルやディレクトリを指定
+.git
+*.log
+**/__pycache__
+.env
+.pytest_cache
+.ruff_cache
+.venv
+*.tmp
+**/cc.ja.300*
+**/*.pt
+cyberagent-285-03dff0795e3a.json
+
+.gitignore
+# 必要でない他のファイルやディレクトリもここに追加
+tests/
+docs/
+notebook/
+src/modules/vap/
+
