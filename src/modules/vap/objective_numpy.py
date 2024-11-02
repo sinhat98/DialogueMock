@@ -192,15 +192,3 @@ class ObjectiveVAP:
         p_all = np.einsum('bid,dc->bic', probs, bin_sum)
         # Normalize exactly like PyTorch
         return p_all / (p_all.sum(-1, keepdims=True) + 1e-5)
-
-if __name__ == "__main__":
-    # 使用例
-    vap = ObjectiveVAP()
-    va = np.random.rand(2, 100, 2)  # (batch_size, time_steps, channels)
-    labels = vap.get_labels(va)
-
-    # ロジットから確率を計算
-    logits = np.random.randn(2, 90, 256)  # (batch_size, time_steps, n_classes)
-    probs_dict = vap.get_probs(logits)
-    
-    

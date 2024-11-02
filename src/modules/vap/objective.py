@@ -137,6 +137,51 @@ class Codebook(nn.Module):
         embed_ind = dist.max(dim=-1).indices
         embed_ind = embed_ind.view(*shape[:-2])
         return embed_ind
+    
+    # def encode(self, x: Tensor) -> Tensor:
+    #     assert x.shape[-2:] == (
+    #         2,
+    #         self.n_bins,
+    #     ), f"Codebook expects (..., 2, {self.n_bins}) got {x.shape}"
+
+    #     # デバッグ用の出力を追加
+    #     print("PyTorch Input shape:", x.shape)
+    #     print("PyTorch Input sample:", x[0, 0])
+
+    #     shape = x.shape
+    #     flatten = rearrange(x, "... c bpp -> (...) (c bpp)", c=2, bpp=self.n_bins)
+    #     print("PyTorch Flattened shape:", flatten.shape)
+    #     print("PyTorch Flattened sample:", flatten[0])
+
+    #     embed = self.emb.weight.T
+    #     print("PyTorch embed shape:", embed.shape)
+    #     print("PyTorch embed sample:", embed[:, 0])
+
+    #     x_squared = flatten.pow(2).sum(1, keepdim=True)
+    #     print("PyTorch x_squared shape:", x_squared.shape)
+    #     print("PyTorch x_squared sample:", x_squared[0])
+
+    #     dot_product = flatten @ embed
+    #     print("PyTorch dot_product shape:", dot_product.shape)
+    #     print("PyTorch dot_product sample:", dot_product[0])
+
+    #     embed_squared = embed.pow(2).sum(0, keepdim=True)
+    #     print("PyTorch embed_squared shape:", embed_squared.shape)
+    #     print("PyTorch embed_squared sample:", embed_squared[0, 0])
+
+    #     dist = -(x_squared - 2 * dot_product + embed_squared)
+    #     print("PyTorch dist shape:", dist.shape)
+    #     print("PyTorch dist sample:", dist[0])
+
+    #     embed_ind = dist.max(dim=-1).indices
+    #     print("PyTorch indices shape:", embed_ind.shape)
+    #     print("PyTorch indices sample:", embed_ind[0])
+
+    #     result = embed_ind.view(*shape[:-2])
+    #     print("PyTorch result shape:", result.shape)
+    #     print("PyTorch result sample:", result[0])
+
+    #     return result
 
     def decode(self, idx: Tensor):
         v = self.emb(idx)

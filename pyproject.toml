@@ -10,6 +10,9 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+torch = { version = "^2.1.0", source = "pytorch" }
+torchvision = { version = "^0.16.0", source = "pytorch" }
+torchaudio = { version = "^2.1.0", source = "pytorch" }
 librosa = "*"
 numpy = "^1.26.0"
 pandas = "==2.2.3"
@@ -53,3 +56,8 @@ sentence-transformers = {extras = ["onnx"], version = "^3.2.0"}
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
