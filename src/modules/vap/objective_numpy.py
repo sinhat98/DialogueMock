@@ -1,8 +1,6 @@
 import numpy as np
 
 
-import numpy as np
-from scipy.spatial.distance import cdist
 from typing import Dict, List, Tuple
 
 def bin_times_to_frames(bin_times: List[float], frame_hz: int) -> List[int]:

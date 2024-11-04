@@ -4,7 +4,6 @@ from rank_bm25 import BM25Okapi
 from pathlib import Path
 
 import gensim
-from janome.tokenizer import Tokenizer
 import numpy as np
 
 from src.utils import get_custom_logger
@@ -121,13 +120,13 @@ class FastTextFAQ:
     def load_model(self):
         # バイナリ形式のモデルが存在すればロード
         if self.binary_model_path.exists():
-            logger.info(f"Loading FastText model from binary file...")
+            logger.info("Loading FastText model from binary file...")
             self.model = gensim.models.KeyedVectors.load_word2vec_format(str(self.binary_model_path), binary=True)
         else:
             # テキスト形式のモデルをロードしてバイナリ形式で保存
-            logger.info(f"Loading FastText model from text file...")
+            logger.info("Loading FastText model from text file...")
             self.model = gensim.models.KeyedVectors.load_word2vec_format(str(self.vector_dict_dir), binary=False)
-            logger.info(f"Saving FastText model in binary format for faster loading...")
+            logger.info("Saving FastText model in binary format for faster loading...")
             self.model.save_word2vec_format(str(self.binary_model_path), binary=True)
 
     def tokenize(self, text):

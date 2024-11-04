@@ -275,7 +275,7 @@ class DialogBridge:
         
         
             
-            if not self.wait_for_llm and self.is_no_slots and transcription != "" and (not YES in transcription or NO in transcription):
+            if not self.wait_for_llm and self.is_no_slots and transcription != "" and (YES not in transcription or NO in transcription):
                 tts_bridge.add_response("FILLER")
                 logger.info("FAQ response")
                 llm_bridge.add_request(transcription)

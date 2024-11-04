@@ -4,11 +4,23 @@ import numpy as np
 
 import librosa
 import soundfile as sf
+from numpy.typing import NDArray
+
+from g711 import decode_ulaw  # type: ignore
 
 
-def chunk_generator(
-    input_file: str, chunk_seconds: float = 0.02, include_silence=True
-):
+def ulaw_decode(x: bytes) -> NDArray[np.int16]:
+    """u-law エンコードされた配列をデコードし、16ビット整数として返す"""
+
+    x_inv = decode_ulaw(x)  # u-law デコード
+
+    # 結果を16ビット整数にスケーリングして変換
+    x_inv_int16 = (x_inv * 32768).astype(np.int16)  # [-1, 1) -> [-32768, 32767)
+
+    return x_inv_int16
+
+
+def chunk_generator(input_file: str, chunk_seconds: float = 0.02, include_silence=True):
     chunk_count = 0
     with wave.open(input_file, "rb") as wf:
         sample_rate = wf.getframerate()

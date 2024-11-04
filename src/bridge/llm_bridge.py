@@ -18,11 +18,16 @@ class LLMBridge:
         self.system_prompt = system_prompt
         self.json_format = json_format
 
+        self.openai_model = os.environ.get("AZURE_OPENAI_MODEL")
+        model_version = os.environ.get("AZURE_OPENAI_MODEL_VERSION")
         api_key = os.environ.get("AZURE_OPENAI_API_KEY")
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        logger.info(
+            f"Model: {self.openai_model}, Version: {model_version}, Endpoint: {endpoint}"
+        )
         self.client = AzureOpenAI(
             api_key=api_key,
-            api_version="2024-06-01",
+            api_version=model_version,
             azure_endpoint=endpoint,
         )
 
@@ -57,8 +62,8 @@ class LLMBridge:
     def call_llm(self, text):
         if self.json_format:
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                response_format={"type":"json_object"},
+                model=self.openai_model,
+                response_format={"type": "json_object"},
                 messages=[
                     {
                         "role": "system",
@@ -68,11 +73,11 @@ class LLMBridge:
                         "role": "user",
                         "content": text,
                     },
-                ]
+                ],
             )
         else:
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=self.openai_model,
                 messages=[
                     {
                         "role": "system",
@@ -82,10 +87,11 @@ class LLMBridge:
                         "role": "user",
                         "content": text,
                     },
-                ]
+                ],
             )
         return response.choices[0].message.content
-    
+
+
 if __name__ == "__main__":
     import threading
     import time
@@ -119,12 +125,12 @@ if __name__ == "__main__":
     logger.info(f"Elapsed time: {toc}")
 
     llm_bridge.terminate()
-    
+
     # スロットフィリングのテスト
     llm_bridge = LLMBridge(system_prompt_for_slot_filling, json_format=True)
     # t_llm = threading.Thread(target=llm_bridge.response_loop)
     # t_llm.start()
-    
+
     tic = time.time()
     response = llm_bridge.call_llm("来週の土曜日の11時からお願いします。")
     if response:
@@ -133,11 +139,12 @@ if __name__ == "__main__":
         logger.info("No response received.")
     toc = time.time() - tic
     logger.info(f"Elapsed time: {toc}")
-    
+
     tic = time.time()
     response = llm_bridge.call_llm("次の土曜日の13時から2人でお願いします。")
     print(response)
     import json
+
     json_response = json.loads(response)
     print(json_response)
     if response:
@@ -146,7 +153,6 @@ if __name__ == "__main__":
         logger.info("No response received.")
     toc = time.time() - tic
     logger.info(f"Elapsed time: {toc}")
-    
+
     llm_bridge.terminate()
     t_llm.join()
-    

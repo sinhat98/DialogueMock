@@ -6,7 +6,6 @@ from src.modules import (
     VolumeBasedVADModel,
 )
 from src.utils import get_custom_logger
-from copy import deepcopy
 import json
 import asyncio
 from enum import IntEnum
@@ -222,7 +221,7 @@ class DialogBridge:
                 logger.info(f"Slots: {self.slots}")
                 self.bot_speak = False
             
-            if not self.wait_for_llm and self.is_no_slots and transcription != "" and (not YES in transcription or NO in transcription):
+            if not self.wait_for_llm and self.is_no_slots and transcription != "" and (YES not in transcription or NO in transcription):
                 logger.info("FAQ response")
                 llm_bridge.add_request(transcription)
                 tts_bridge.add_response("FILLER")

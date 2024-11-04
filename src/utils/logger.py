@@ -2,10 +2,12 @@ import logging
 import sys
 import os
 
+
 class AbsolutePathFormatter(logging.Formatter):
     """
     Custom formatter to display the absolute path of the filename.
     """
+
     def format(self, record):
         if record.pathname:
             record.pathname = os.path.abspath(record.pathname)

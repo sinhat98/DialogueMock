@@ -1,206 +1,269 @@
+# vap.py
+
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
 import numpy as np
+from dataclasses import dataclass, field
+import time
+
+from src.modules.vap import (
+    EncoderCPC,
+    GPT,
+    GPTStereo,
+    ObjectiveVAP,
+    VAP_MODEL_PATH,
+    CPC_MODEL_PATH,
+)
+from src.utils import get_custom_logger
+
+logger = get_custom_logger(__name__)
 
 
-import numpy as np
-from scipy.spatial.distance import cdist
-from typing import Dict, List, Tuple
+@dataclass
+class VapConfig:
+    sample_rate: int = 16000
+    frame_hz: int = 50
+    bin_times: list[float] = field(default_factory=lambda: [0.2, 0.4, 0.6, 0.8])
+    encoder_type: str = "cpc"
+    wav2vec_type: str = "mms"
+    hubert_model: str = "hubert_jp"
+    freeze_encoder: int = 1
+    load_pretrained: int = 1
+    only_feature_extraction: int = 0
+    dim: int = 256
+    channel_layers: int = 1
+    cross_layers: int = 3
+    num_heads: int = 4
+    dropout: float = 0.1
+    context_limit: int = -1
+    context_limit_cpc_sec: float = -1
+    lid_classify: int = 0
+    lid_classify_num_class: int = 3
+    lid_classify_adversarial: int = 0
+    lang_cond: int = 0
 
-def bin_times_to_frames(bin_times: List[float], frame_hz: int) -> List[int]:
-    return (np.array(bin_times) * frame_hz).astype(int).tolist()
 
-class Codebook:
-    def __init__(self, bin_frames):
-        self.bin_frames = bin_frames
-        self.n_bins = len(self.bin_frames)
-        self.total_bins = self.n_bins * 2
-        self.n_classes = 2 ** self.total_bins
-        self.codes = self.create_code_vectors(self.total_bins)
+class VapGPT(nn.Module):
+    def __init__(self, conf: VapConfig | None = None):
+        super().__init__()
+        if conf is None:
+            conf = VapConfig()
+        self.conf = conf
+        self.sample_rate = conf.sample_rate
+        self.frame_hz = conf.frame_hz
 
-    def single_idx_to_onehot(self, idx: int, d: int = 8) -> np.ndarray:
-        """PyTorch実装と完全に一致"""
-        assert idx < 2 ** d, f"must be possible with {d} binary digits"
-        z = np.zeros(d, dtype=np.float32)
-        b = bin(idx).replace("0b", "")  # '0b' prefixを削除
-        # 右から左（LSB->MSB）の順で値を設定
-        for i, v in enumerate(b[::-1]):  # [::-1]で文字列を逆順に
-            z[i] = float(v)
-        return z
+        self.temp_elapse_time = []
 
-    def create_code_vectors(self, n_bins: int) -> np.ndarray:
-        """PyTorch実装と完全に一致"""
-        n_codes = 2 ** n_bins
-        embs = np.zeros((n_codes, n_bins), dtype=np.float32)
-        for i in range(n_codes):
-            embs[i] = self.single_idx_to_onehot(i, d=n_bins)
-        return embs
-
-    def encode(self, x: np.ndarray) -> np.ndarray:
-        """PyTorch実装と完全に一致するように実装"""
-        assert x.shape[-2:] == (2, self.n_bins), \
-            f"Codebook expects (..., 2, {self.n_bins}) got {x.shape}"
-
-        shape = x.shape
-        flatten = x.reshape(-1, 2 * self.n_bins)
-        
-        # PyTorch実装の計算順序を完全に模倣
-        x_squared = np.sum(flatten**2, axis=1, keepdims=True)  # [N, 1]
-        embed = self.codes.T  # [D, C]
-        
-        # dot product
-        dot_prod = np.dot(flatten, embed)  # [N, C]
-        
-        # embed squared sum
-        embed_squared = np.sum(self.codes**2, axis=1, keepdims=True).T  # [1, C]
-        
-        # 距離計算
-        dist = -(x_squared - 2 * dot_prod + embed_squared)
-        
-        # 最大値のインデックスを取得
-        indices = np.argmax(dist, axis=1)
-        
-        # 元の形状に戻す
-        return indices.reshape(shape[:-2])
-
-    def decode(self, idx: np.ndarray) -> np.ndarray:
-        """デコード処理"""
-        codes = self.codes[idx]
-        return codes.reshape(*codes.shape[:-1], 2, -1)
-    
-
-class ProjectionWindow:
-    def __init__(
-        self,
-        bin_times: List = [0.2, 0.4, 0.6, 0.8],
-        frame_hz: int = 50,
-        threshold_ratio: float = 0.5,
-    ):
-        self.bin_times = bin_times
-        self.frame_hz = frame_hz
-        self.threshold_ratio = threshold_ratio
-        self.bin_frames = bin_times_to_frames(bin_times, frame_hz)
-        self.n_bins = len(self.bin_frames)
-        self.total_bins = self.n_bins * 2
-        self.horizon = sum(self.bin_frames)
-
-    def projection(self, va: np.ndarray) -> np.ndarray:
-        """Extract projection (bins)
-        PyTorch's unfold operation equivalent
-        """
-        batch_size, time_steps, n_channels = va.shape
-        n_frames = time_steps - self.horizon
-        
-        # Skip first frame like PyTorch implementation
-        va = va[:, 1:, :]
-        
-        windows = np.zeros((batch_size, n_frames, n_channels, self.horizon))
-        for i in range(n_frames):
-            windows[:, i, :, :] = va[:, i:i+self.horizon, :].transpose(0, 2, 1)
-        
-        return windows
-
-    def projection_bins(self, projection_window: np.ndarray) -> np.ndarray:
-        """Exactly match PyTorch implementation"""
-        start = 0
-        v_bins = []
-        for b in self.bin_frames:
-            end = start + b
-            # Use exact same operations as PyTorch
-            m = projection_window[..., start:end].sum(axis=-1) / float(b)
-            m = (m >= self.threshold_ratio).astype(np.float32)  # Use float32 to match PyTorch
-            v_bins.append(m)
-            start = end
-        return np.stack(v_bins, axis=-1)
-
-    def __call__(self, va: np.ndarray) -> np.ndarray:
-        projection_windows = self.projection(va)
-        return self.projection_bins(projection_windows)
-
-class ObjectiveVAP:
-    def __init__(
-        self,
-        bin_times: List[float] = [0.2, 0.4, 0.6, 0.8],
-        frame_hz: int = 50,
-        threshold_ratio: float = 0.5,
-    ):
-        self.frame_hz = frame_hz
-        self.bin_times = bin_times
-        self.bin_frames = bin_times_to_frames(bin_times, frame_hz)
-        self.horizon = sum(self.bin_frames)
-        self.horizon_time = sum(bin_times)
-
-        self.codebook = Codebook(self.bin_frames)
-        self.projection_window_extractor = ProjectionWindow(
-            bin_times, frame_hz, threshold_ratio
+        self.ar_channel = GPT(
+            dim=conf.dim,
+            dff_k=3,
+            num_layers=conf.channel_layers,
+            num_heads=conf.num_heads,
+            dropout=conf.dropout,
+            context_limit=conf.context_limit,
         )
-        self.lid_n_classes = 3
 
-    def window_to_win_dialog_states(self, wins):
-        return (wins.sum(-1) > 0).sum(-1)
+        self.ar = GPTStereo(
+            dim=conf.dim,
+            dff_k=3,
+            num_layers=conf.cross_layers,
+            num_heads=conf.num_heads,
+            dropout=conf.dropout,
+            context_limit=conf.context_limit,
+        )
 
-    def get_labels(self, va: np.ndarray) -> np.ndarray:
-        projection_windows = self.projection_window_extractor(va)
-        return self.codebook.encode(projection_windows)
+        self.objective = ObjectiveVAP(bin_times=conf.bin_times, frame_hz=conf.frame_hz)
 
-    def get_da_labels(self, va: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        projection_windows = self.projection_window_extractor(va)
-        idx = self.codebook.encode(projection_windows)
-        ds = self.window_to_win_dialog_states(projection_windows)
-        return idx, ds
+        self.va_classifier = nn.Linear(conf.dim, 1)
 
-    def get_probs(self, logits: np.ndarray) -> Dict[str, np.ndarray]:
-        """音声アクティビティの予測確率を計算し、異なる時間窓での確率を返す。
+        if self.conf.lid_classify == 1:
+            self.lid_classifier = nn.Linear(conf.dim, conf.lid_classify_num_class)
+        elif self.conf.lid_classify == 2:
+            self.lid_classifier_middle = nn.Linear(
+                conf.dim * 2, conf.lid_classify_num_class
+            )
 
-        Parameters
-        ----------
-        logits : np.ndarray, shape (batch_size, n_frames, n_classes)
-            モデルから出力されたロジット値。
-            n_classesは2^8=256で、8ビット(2話者×4時間ビン)の全パターンを表現。
+        if self.conf.lang_cond == 1:
+            self.lang_condition = nn.Linear(conf.lid_classify_num_class, conf.dim)
 
-        Returns
-        -------
-        Dict[str, np.ndarray]
-            以下の要素を含む辞書:
-            - "probs": np.ndarray, shape (batch_size, n_frames, n_classes)
-                全クラスに対するソフトマックス確率。
-            
-            - "p_now": np.ndarray, shape (batch_size, n_frames, 2)
-                現在の時間窓(最初の2ビン)における各話者の発話確率。
-                [0]は話者1、[1]は話者2の確率を表す。
-            
-            - "p_future": np.ndarray, shape (batch_size, n_frames, 2)
-                将来の時間窓(後ろの2ビン)における各話者の発話確率。
-                [0]は話者1、[1]は話者2の確率を表す。
-            
-            - "p_tot": np.ndarray, shape (batch_size, n_frames, 2)
-                全時間窓(全4ビン)における各話者の発話確率。
-                [0]は話者1、[1]は話者2の確率を表す。
+        self.vap_head = nn.Linear(conf.dim, self.objective.n_classes)
 
-        """
-        probs = np.exp(logits) / np.sum(np.exp(logits), axis=-1, keepdims=True)
-        
-        return {
-            "probs": probs,
-            "p_now": self._aggregate_probs(probs, 0, 1),
-            "p_future": self._aggregate_probs(probs, 2, 3),
-            "p_tot": self._aggregate_probs(probs, 0, 3),
-        }
-    def _aggregate_probs(self, probs: np.ndarray, from_bin: int, to_bin: int) -> np.ndarray:
-        """Match PyTorch implementation exactly"""
-        states = self.codebook.decode(np.arange(self.codebook.n_classes))
-        bin_sum = states[:, :, from_bin:to_bin + 1].sum(-1)
-        # Use same einsum operation
-        p_all = np.einsum('bid,dc->bic', probs, bin_sum)
-        # Normalize exactly like PyTorch
-        return p_all / (p_all.sum(-1, keepdims=True) + 1e-5)
+    def load_encoder(self, cpc_model):
+        self.encoder1 = EncoderCPC(
+            load_pretrained=True if self.conf.load_pretrained == 1 else False,
+            freeze=self.conf.freeze_encoder,
+            cpc_model=cpc_model,
+        )
+        self.encoder1 = self.encoder1.eval()
 
-if __name__ == "__main__":
-    # 使用例
-    vap = ObjectiveVAP()
-    va = np.random.rand(2, 100, 2)  # (batch_size, time_steps, channels)
-    labels = vap.get_labels(va)
+        self.encoder2 = EncoderCPC(
+            load_pretrained=True if self.conf.load_pretrained == 1 else False,
+            freeze=self.conf.freeze_encoder,
+            cpc_model=cpc_model,
+        )
+        self.encoder2 = self.encoder2.eval()
 
-    # ロジットから確率を計算
-    logits = np.random.randn(2, 90, 256)  # (batch_size, time_steps, n_classes)
-    probs_dict = vap.get_probs(logits)
-    
-    
+        if self.conf.freeze_encoder == 1:
+            print("freeze encoder")
+            self.encoder1.freeze()
+            self.encoder2.freeze()
+
+    @property
+    def horizon_time(self):
+        return self.objective.horizon_time
+
+    def encode_audio(
+        self, audio1: torch.Tensor, audio2: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        x1 = self.encoder1(audio1)  # speaker 1
+        x2 = self.encoder2(audio2)  # speaker 2
+        return x1, x2
+
+    def vad_loss(self, vad_output, vad):
+        return F.binary_cross_entropy_with_logits(vad_output, vad)
+
+
+class VAPRealTime:
+    BINS_P_NOW = [0, 1]
+    BINS_PFUTURE = [2, 3]
+
+    def __init__(self, frame_rate: int = 20, context_len_sec: float = 2.5):
+        conf = VapConfig()
+        self.vap = VapGPT(conf)
+
+        self.device = "cpu"
+        sd = torch.load(VAP_MODEL_PATH, map_location=torch.device("cpu"))
+        self.vap.load_encoder(cpc_model=CPC_MODEL_PATH)
+        self.vap.load_state_dict(sd, strict=False)
+
+        self._init_encoder_params(sd)
+
+        self.vap.to(self.device)
+        self.vap = self.vap.eval()
+
+        self.frame_rate = frame_rate
+        self.audio_context_len = int(context_len_sec * frame_rate)
+        self.frame_contxt_padding = 320
+        self.sampling_rate = 16000
+        self.audio_frame_size = (
+            self.sampling_rate // self.frame_rate + self.frame_contxt_padding
+        )
+
+        self.e1_context = []
+        self.e2_context = []
+
+        self.result_p_now = 0.0
+        self.result_p_future = 0.0
+
+        logger.info(
+            f"Initialized VAPRealTime with frame_rate={frame_rate}, context_len={context_len_sec}"
+        )
+
+    def _init_encoder_params(self, state_dict):
+        self.vap.encoder1.downsample[1].weight = nn.Parameter(
+            state_dict["encoder.downsample.1.weight"]
+        )
+        self.vap.encoder1.downsample[1].bias = nn.Parameter(
+            state_dict["encoder.downsample.1.bias"]
+        )
+        self.vap.encoder1.downsample[2].ln.weight = nn.Parameter(
+            state_dict["encoder.downsample.2.ln.weight"]
+        )
+        self.vap.encoder1.downsample[2].ln.bias = nn.Parameter(
+            state_dict["encoder.downsample.2.ln.bias"]
+        )
+
+        self.vap.encoder2.downsample[1].weight = nn.Parameter(
+            state_dict["encoder.downsample.1.weight"]
+        )
+        self.vap.encoder2.downsample[1].bias = nn.Parameter(
+            state_dict["encoder.downsample.1.bias"]
+        )
+        self.vap.encoder2.downsample[2].ln.weight = nn.Parameter(
+            state_dict["encoder.downsample.2.ln.weight"]
+        )
+        self.vap.encoder2.downsample[2].ln.bias = nn.Parameter(
+            state_dict["encoder.downsample.2.ln.bias"]
+        )
+
+    def _pad_audio(self, audio: torch.Tensor) -> torch.Tensor:
+        """音声データを必要な長さにパディング"""
+        current_size = audio.shape[-1]
+        if current_size < self.audio_frame_size:
+            padding_size = self.audio_frame_size - current_size
+            padded = F.pad(audio, (0, padding_size))
+            # logger.debug(f"Padded audio from {current_size} to {padded.shape[-1]}")
+            return padded
+        return audio
+
+    def process_vap(self, bot_audio: np.ndarray, user_audio: np.ndarray):
+        try:
+            if (
+                len(bot_audio) < self.frame_contxt_padding
+                or len(user_audio) < self.frame_contxt_padding
+            ):
+                logger.warning("Input audio too short, skipping processing")
+                return
+
+            with torch.no_grad():
+                x1 = (
+                    torch.tensor(bot_audio, dtype=torch.float32, device=self.device)
+                    .unsqueeze(0)
+                    .unsqueeze(0)
+                )
+                x2 = (
+                    torch.tensor(user_audio, dtype=torch.float32, device=self.device)
+                    .unsqueeze(0)
+                    .unsqueeze(0)
+                )
+
+                x1 = self._pad_audio(x1)
+                x2 = self._pad_audio(x2)
+
+                # logger.debug(
+                #     f"Processing audio shapes after padding - x1: {x1.shape}, x2: {x2.shape}"
+                # )
+
+                e1, e2 = self.vap.encode_audio(x1, x2)
+
+                # logger.debug(f"Encoded shapes - e1: {e1.shape}, e2: {e2.shape}")
+
+                self.e1_context.append(e1)
+                self.e2_context.append(e2)
+
+                if len(self.e1_context) > self.audio_context_len:
+                    self.e1_context = self.e1_context[-self.audio_context_len :]
+                if len(self.e2_context) > self.audio_context_len:
+                    self.e2_context = self.e2_context[-self.audio_context_len :]
+
+                x1 = torch.cat(self.e1_context, dim=1)
+                x2 = torch.cat(self.e2_context, dim=1)
+
+                o1 = self.vap.ar_channel(x1, attention=False)
+                o2 = self.vap.ar_channel(x2, attention=False)
+                out = self.vap.ar(o1["x"], o2["x"], attention=False)
+
+                logits = self.vap.vap_head(out["x"])
+                probs = logits.softmax(dim=-1)
+
+                p_now = self.vap.objective.probs_next_speaker_aggregate(
+                    probs, from_bin=self.BINS_P_NOW[0], to_bin=self.BINS_P_NOW[-1]
+                )
+                p_future = self.vap.objective.probs_next_speaker_aggregate(
+                    probs, from_bin=self.BINS_PFUTURE[0], to_bin=self.BINS_PFUTURE[1]
+                )
+
+                self.result_p_now = p_now.to("cpu").tolist()[0][-1]  # list[spk1, spk2]
+                self.result_p_future = p_future.to("cpu").tolist()[0][
+                    -1
+                ]  # list[spk1, spk2]
+                self.result_p_now = self.result_p_now[0]
+                self.result_p_future = self.result_p_future[0]
+
+                logger.debug(
+                    f"VAP processing complete - p_now: {self.result_p_now:.3f}, p_future: {self.result_p_future:.3f}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error in VAP processing: {e}", exc_info=True)

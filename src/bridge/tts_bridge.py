@@ -18,7 +18,6 @@ import azure.cognitiveservices.speech as speechsdk
 from abc import abstractmethod
 
 from src.utils import get_custom_logger
-from src.modules.dialogue.utils.template import tts_label2text
 
 logger = get_custom_logger(__name__)
 
@@ -209,7 +208,7 @@ class AzureTTSBridge(BaseTTSBridge):
                 audio_payload = self.trans4twilio(audio)
                 out_data = self.get_twilio_media_stream(audio_payload, self.stream_sid)
                 self.audio_queue.put((text, out_data), block=False)
-        except Exception as e:
+        except Exception:
             self.get_template_audio("APLOGIZE")
             logger.warning("send apology message due to Azure TTS error")
             

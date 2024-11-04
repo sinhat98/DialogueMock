@@ -1,14 +1,12 @@
-import sys, os
+import sys
 import time
 import numpy
 import queue
 
 import threading
-import base64, copy
-import librosa, pysptk
+import base64
 
 import torch
-import torch.nn as nn
 from _audio_vap.VAP import VAP
 from _audio_vap.encoder import EncoderCPC
 from _audio_vap.modules import TransformerStereo
@@ -17,7 +15,6 @@ from scipy.io.wavfile import write
 
 from base import RemdisModule, RemdisUpdateType
 
-from vap.utils.audio import load_waveform
 
 # GPUの設定
 if sys.platform == 'darwin':

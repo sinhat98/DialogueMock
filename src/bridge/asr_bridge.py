@@ -11,6 +11,7 @@ MODEL = "latest_long"
 MAX_RETRIES = 3
 RETRY_INTERVAL = 5  # seconds
 
+
 class ASRBridge:
     def __init__(self, stability_threshold=1.0):
         self._queue = queue.Queue()
@@ -18,7 +19,7 @@ class ASRBridge:
         self.stability = 0
         self.transcription = ""
         self.is_final = False
-        
+
         self.bot_speak = False
         self.stability_threshold = stability_threshold
         self.stability_count = 0
@@ -47,7 +48,9 @@ class ASRBridge:
                 self._run()
                 break
             except (OutOfRange, GoogleAPICallError, RetryError) as e:
-                logger.error(f"Error occurred: {e}. Retrying in {RETRY_INTERVAL} seconds...")
+                logger.error(
+                    f"Error occurred: {e}. Retrying in {RETRY_INTERVAL} seconds..."
+                )
                 retries += 1
                 time.sleep(RETRY_INTERVAL)
         if retries == MAX_RETRIES:
@@ -66,7 +69,7 @@ class ASRBridge:
 
     def set_bot_speak(self, bot_speak):
         self.bot_speak = bot_speak
-        
+
     def set_stability_threshold(self, stability_threshold):
         self.stability_threshold = stability_threshold
         # logger.info(f"Set stability threshold to {self.stability_threshold}")
@@ -113,15 +116,10 @@ class ASRBridge:
 
     def reset(self):
         self.transcription = ""
-        self.is_final = False
+        logger.info("ASR reset in asr_bridge.py")
 
     def _on_response(self, response):
-        # Botが話している場合、認識結果を無視する
-        if self.bot_speak:
-            self.transcription = ""
-            self.is_final = False
-            return
-        
+
         if not response.results:
             return
         result = response.results[0]
@@ -133,15 +131,16 @@ class ASRBridge:
         if self.transcription:
             logger.info(f"ASR: {self.transcription}")
             logger.info(f"ASR stability: {self.stability}")
-        
+
         if self.stability > self.stability_threshold:
             self.stability_count += 1
             self.terminate()
-        
+
         # if self.stability_count >= self.stability_count_threshold:
-            # self.terminate()
-            # logger.info("ASR done")
-            # self.stability_count = 0
+        # self.terminate()
+        # logger.info("ASR done")
+        # self.stability_count = 0
+
 
 if __name__ == "__main__":
     asr_bridge = ASRBridge()
