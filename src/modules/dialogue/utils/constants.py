@@ -1,4 +1,3 @@
-
 from datetime import time as dt_time
 from dataclasses import dataclass
 
@@ -17,13 +16,13 @@ FILLER = "FILLER"
 APLOGIZE = "APLOGIZE"
 
 
-
 # 営業時間を表すデータクラス
 @dataclass
 class TimeSegment:
     start: dt_time
     end: dt_time
-    
+
+
 BUSINESS_HOURS = [
     TimeSegment(start=dt_time(11, 0), end=dt_time(15, 0)),
     TimeSegment(start=dt_time(17, 0), end=dt_time(23, 0)),
