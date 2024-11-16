@@ -28,6 +28,18 @@ def get_base_system_prompt(slot: dict):
 """
     return base_prompt
 
+# intentsは意図とフレーズのマッピング
+def get_system_prompt_for_intent_classification(intents: dict):
+    prompt = ""
+    hedder_text = "以下のフレーズに対応する意図を選択してください。"
+    phrases_str = ""
+    for intent, phrases in intents.items():
+        phrases_str += f"\n- {intent}: {', '.join(phrases)}"
+    phrases_str += "\n"
+    tail_text = "回答は必ず" + ", ".join(intents.keys()) + "のいずれかにしてください。"
+    prompt = f"{hedder_text}{phrases_str}{tail_text}"
+    return prompt
+    
 
 # system_prompt_for_action_type = """
 # 与えられたユーザーの要求から埋めるべきslotを**JSON**形式で抽出してください
@@ -107,3 +119,11 @@ system_prompt_for_faq = """
 
 # もしユーザーの質問に該当するものがFAQリストにない場合は、'NOT_FOUND'を返してください。
 # ただし、ユーザーの要求には音声認識誤りが含まれる可能性がある場合があります。音声認識誤りがあると思われる場合は、'APOLOGIZE'を返してください。
+
+if __name__ == "__main__":
+    intetns_dict = {
+        "予約": ["予約したい", "予約を取りたい"],
+        "キャンセル": ["予約をキャンセルしたい", "予約を取り消したい"],
+        "変更": ["予約を変更したい", "予約を変更する"]
+    }
+    print(get_system_prompt_for_intent_classification(intetns_dict))
