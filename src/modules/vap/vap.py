@@ -5,7 +5,6 @@ import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
 from dataclasses import dataclass, field
-import time
 
 from src.modules.vap import (
     EncoderCPC,

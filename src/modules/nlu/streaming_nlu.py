@@ -1,7 +1,6 @@
 import spacy
 from enum import Enum
 from dataclasses import dataclass, field
-import asyncio
 from src.utils import get_custom_logger
 from src.modules.nlu.process_text import process_date, process_time, process_n_person
 from src.modules.nlu.validation import validate_date, validate_n_person, validate_time
@@ -71,7 +70,7 @@ class StreamingNLUModule:
         self.entities = {k: [] for k in self.slot_keys}
         self.terminal_forms = []
         self.faq_response = None
-        self.hearing_item = ""  # ヒアリング項目を保持する変数
+        self._hearing_item = ""  # ヒアリング項目を保持する変数
 
     def update_doc(self, text: str):
         if not text:
@@ -105,13 +104,12 @@ class StreamingNLUModule:
         Returns:
             str: 検出されたヒアリング項目
         """
-        self.hearing_item = ""  # 初期化
+        self._hearing_item = ""  # 初期化
         for slot in self.original_slot_keys:
             if slot in text:
-                self.hearing_item = slot
+                self._hearing_item = slot
                 logger.debug(f"ヒアリング項目を検出: {slot}")
                 break  # 最初に見つかったヒアリング項目のみを保持
-        return self.hearing_item
 
 
     def extract_entities(self):
@@ -202,9 +200,16 @@ class StreamingNLUModule:
         return self.status.states
 
     @property
+    def hearing_item(self):
+        return self._hearing_item
+    
+    @property
     def slot_states(self):
-        slot_states = {k: v for k, v in self.cur_states.items() if k != "terminal_forms"}
-        return {EntityLabel.spacy_to_ja(k): v for k, v in slot_states.items()}
+        slot_states = {}
+        for k, v in self.cur_states.items():
+            if k != "terminal_forms":
+                slot_states[EntityLabel.spacy_to_ja(k)] = v
+        return slot_states
 
     def _preprocess_text(self, text: str):
         date_maps = process_date(text)

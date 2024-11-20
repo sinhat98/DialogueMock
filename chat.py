@@ -12,7 +12,6 @@ logger = get_custom_logger(__name__)
 
 # 初期設定
 DefinedEntities = [e.value[1] for e in EntityLabel.__members__.values()]
-import pdb
 
 # pdb.set_trace()
 # モジュールの初期化

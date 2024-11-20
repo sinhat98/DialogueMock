@@ -18,7 +18,7 @@ from twilio.rest.api.v2010.account.call import CallInstance
 from twilio.base import exceptions as twilio_exceptions
 
 from src.modules.nlu.prompt import system_prompt_for_faq, system_prompt_for_slot_filling
-from src.modules.dialogue.utils.template import tts_label2text
+from modules.dialogue.utils._template import tts_label2text
 from src.bridge import ASRBridge, TTSBridge, LLMBridge
 from src.bridge.dialog_bridge import (
     DialogBridgeWithLLMSF as DialogBridgeV1,

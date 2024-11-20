@@ -1,8 +1,10 @@
 from datetime import datetime
 import json
-from src.modules.dialogue.utils.template import templates
+from src.modules import templates
+from src.utils import get_custom_logger
+logger = get_custom_logger(__name__)
 
-action_type_list = list(templates.get("action_type").keys())
+action_type_list = list(templates.get("scenes").keys())
 
 today = datetime.now().strftime("%Y/%m/%d")
 
@@ -30,16 +32,24 @@ def get_base_system_prompt(slot: dict):
 
 # intentsは意図とフレーズのマッピング
 def get_system_prompt_for_intent_classification(intents: dict):
-    prompt = ""
-    hedder_text = "以下のフレーズに対応する意図を選択してください。"
-    phrases_str = ""
+    prompt = """
+以下のフレーズに対応する意図を選択し、JSON形式で回答してください。
+
+回答形式:
+{
+    "intent": "選択した意図"
+}
+"""
+    logger.debug(f"intents: {intents}")
+    phrases_str = "意図の種類と対応するフレーズ:"
     for intent, phrases in intents.items():
         phrases_str += f"\n- {intent}: {', '.join(phrases)}"
     phrases_str += "\n"
-    tail_text = "回答は必ず" + ", ".join(intents.keys()) + "のいずれかにしてください。"
-    prompt = f"{hedder_text}{phrases_str}{tail_text}"
-    return prompt
     
+    tail_text = "回答は必ず" + ", ".join(intents.keys()) + "のいずれかをJSONのintentフィールドに設定してください。"
+    
+    prompt = f"{prompt}\n{phrases_str}\n{tail_text}"
+    return prompt
 
 # system_prompt_for_action_type = """
 # 与えられたユーザーの要求から埋めるべきslotを**JSON**形式で抽出してください
@@ -83,25 +93,22 @@ system_prompt_for_faq = """
 
 # FAQリスト:
 ## 基本的な質問
-### 営業関連
-質問: 営業時間について知りたい
+質問: 営業時間について
 回答: 土日祝日ともに11:00から23:00まで営業しております。
 
-質問: 駐車場の利用について知りたい
+質問: 駐車場の利用について
 回答: 駐車場はございませんが、近隣にコインパーキングがございます。
 
-### 予約・席arrangements
+
 質問: 同一グループでの異なるコース注文について
 回答: 同一グループの方は、お席を分けても皆様同じコースをご注文いただきます。
 
-質問: 個室や特別な席の利用について
+質問: 個室の利用について
 回答: 個室はございません。車いす・ベビーカー対応の席は一部店舗でご用意しております。ご利用の際は事前予約をお勧めいたします。
 
-### 飲み放題関連
 質問: グループでの飲み放題の注文について
 回答: アルコールとソフトドリンクを組み合わせたご注文は可能です。ただし、グループの皆様がいずれかの飲み放題をご注文いただく必要があります。幼児様は、グループの皆様が飲み放題をご注文の場合、ソフトドリンク飲み放題を無料でご利用いただけます。
 
-### 料金・支払い関連
 質問: 年齢確認や証明書について
 回答: シニア料金、幼児・小学生料金ともに証明書は不要でございます。
 
@@ -111,7 +118,6 @@ system_prompt_for_faq = """
 質問: 割引の併用について
 回答: 株主優待券と割引券は併用可能です。シニア料金にも、特別な記載がない限り割引券をご利用いただけます。
 
-### アレルギー情報
 質問: アレルギー情報について
 回答: 最新のアレルギー情報はホームページでご確認いただけます。記載のない項目については、2週間程度の調査期間が必要となります。
 """

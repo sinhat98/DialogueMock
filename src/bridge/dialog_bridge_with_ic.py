@@ -1,7 +1,4 @@
 from src.modules import (
-    RuleDST,
-    TemplateNLG,
-    templates,
     StreamingNLUModule,
     VolumeBasedVADModel,
 )
@@ -43,8 +40,8 @@ class TurnTakingStatus(IntEnum):
 class DialogBridge(ABC):
     def __init__(self, default_state: dict = {}):
         self.stream_sid = None
-        self.dst = RuleDST(templates, default_state)
-        self.nlg = TemplateNLG(templates)
+        # self.dst = RuleDST(templates, default_state)
+        # self.nlg = TemplateNLG(templates)
         self.streaming_nlu = StreamingNLUModule(slot_keys=self.dst.initial_state.keys())
         self.streaming_vad = VolumeBasedVADModel(
             sample_rate=SAMPLE_RATE,

@@ -12,7 +12,88 @@ class TemplateNLG:
         self.templates = templates
         self.scenes = templates["scenes"]
         self.common = templates["common"]
+        # self.confirmation = templates.get("confirmation", {})  # 追加
         logger.info("Initialized TemplateNLG")
+
+    def get_confirmation(self, intent):
+        intents_template = self.scenes.get(intent, {})
+        # logger.debug(f"Intents template: {intents_template}")
+        final_confirmation_config = intents_template.get("final_confirmation", {})
+        # logger.debug(f"Final confirmation config: {final_confirmation_config}")
+        return final_confirmation_config
+
+    def get_confirmation_prompt(self, intent: str, state: Dict[str, str]) -> Optional[str]:
+        """
+        確認シーンのプロンプトを生成
+        Args:
+            intent (str): 現在のintent
+            state (Dict[str, str]): 現在の状態
+        Returns:
+            Optional[str]: 確認プロンプト
+        """
+        confirmation_config = self.get_confirmation(intent)
+        
+        try:
+            prompt = confirmation_config["prompt"].format(**state)
+            logger.debug(f"Generated confirmation prompt: {prompt}")
+            return prompt
+        except KeyError as e:
+            logger.error(f"Missing key in state for confirmation prompt: {e}")
+            return None
+
+    def get_confirmation_response(self, intent: str, confirmation_type: str) -> Optional[str]:
+        """
+        確認シーンの応答を生成
+        Args:
+            intent (str): 現在のintent
+            confirmation_type (str): 確認応答の種類 (confirm/change/cancel)
+        Returns:
+            Optional[str]: 確認応答文
+        """
+        confirmation = self.get_confirmation(intent)
+        if len(confirmation) == 0:
+            return None
+        response = confirmation["responses"].get(confirmation_type)
+        if response:
+            logger.debug(f"Generated confirmation response for {confirmation_type}: {response}")
+            return response
+        return None
+
+    def get_correction_guidance(self, intent: str) -> Optional[str]:
+        """
+        修正項目の選択ガイダンスを生成
+        Args:
+            intent (str): 現在のintent
+        Returns:
+            Optional[str]: 修正ガイダンス文
+        """
+        confirmation = self.get_confirmation(intent)
+        if len(confirmation) == 0:
+            return None
+            
+        guidance = confirmation["responses"].get("change")
+        if guidance:
+            logger.debug(f"Generated correction guidance: {guidance}")
+            return guidance
+        return None
+
+    def get_slot_correction_prompt(self, intent: str, slot: str) -> Optional[str]:
+        """
+        スロット修正用のプロンプトを生成
+        Args:
+            intent (str): 現在のintent
+            slot (str): 修正対象のスロット
+        Returns:
+            Optional[str]: 修正プロンプト
+        """
+        scene = self.scenes.get(intent, {})
+        
+        correction = scene.get("correction", {}).get(slot)
+        
+        if correction:
+            logger.debug(f"Generated slot correction prompt for {slot}: {correction[0]}")
+            return correction[0]
+        return None
 
     def get_scene_initial_response(self, intent: str) -> Optional[str]:
         """
@@ -83,7 +164,7 @@ class TemplateNLG:
         return None
 
     def get_implicit_confirmation(self, intent: str, 
-                                updated_slots: Dict[str, str]) -> Optional[str]:
+                                updated_slots: dict) -> Optional[str]:
         """
         暗黙の確認応答を生成
         Args:
@@ -92,6 +173,7 @@ class TemplateNLG:
         Returns:
             Optional[str]: 確認応答文
         """
+        
         if not updated_slots:
             return None
 
@@ -151,11 +233,27 @@ class TemplateNLG:
         """
         scene = self.scenes.get(intent, {})
         correction = scene.get("correction", {}).get(slot)
+        if isinstance(correction, (tuple, list)):
+            correction = correction[0]
         
         if correction:
             logger.debug(f"Generated correction prompt for {slot}: {correction[0]}")
             return correction
         return None
+    
+    def get_final_confrmation_response(self, intent: str, local_intent: str) -> Optional[str]:
+        """
+        最終確認応答を生成
+        Args:
+            intent (str): 現在のintent
+        Returns:
+            Optional[str]: 最終確認応答文
+        """
+        scene = self.scenes.get(intent, {})
+        final_confirmation = scene.get("final_confirmation", {})
+        response = final_confirmation.get("responses", {}).get(local_intent)
+        logger.debug(f"Generated final confirmation response: {response} for {local_intent}")
+        return response
 
     def get_fallback_message(self, fallback_type: str) -> str:
         """
