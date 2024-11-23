@@ -2,8 +2,8 @@ import spacy
 from enum import Enum
 from dataclasses import dataclass, field
 from src.utils import get_custom_logger
-from src.modules.nlu.process_text import process_date, process_time, process_n_person
-from src.modules.nlu.validation import validate_date, validate_n_person, validate_time
+from src.modules.nlu.process_text import process_date, process_time, process_person_count
+from src.modules.nlu.validation import validate_date, validate_person_count, validate_time
 
 logger = get_custom_logger(__name__)
 
@@ -86,8 +86,9 @@ class StreamingNLUModule:
         elif label == EntityLabel.TIME.value[0]:
             flag = validate_time(value)
         elif label == EntityLabel.N_PERSON.value[0]:
-            value = process_n_person(value)
-            flag = validate_n_person(value)
+            # 数字以外を削除 (e.g. "6人" -> "6")
+            value = ''.join(filter(str.isdigit, value))
+            flag = validate_person_count(value)
         else:
             flag = True
 
@@ -221,13 +222,19 @@ class StreamingNLUModule:
         logger.debug(f"time_maps: {time_maps} text: {text}")
         for k, v in time_maps.items():
             text = text.replace(k, v + ' ')
+            
+        person_count_maps = process_person_count(text)
+        logger.debug(f"person_count_maps: {person_count_maps} text: {text}")
+        for k, v in person_count_maps.items():
+            text = text.replace(k, v + ' ')
+        print(text)
 
         return text
 
     def _post_process(self):
         pass
         # for k, v in self.cur_states.items():
-        #     n_person = process_n_person(v)
+        #     n_person = process_person_count(v)
         #     logger.debug(f"n_person: {n_person}")
         #     if n_person is not None:
         #         self.cur_states[k] = n_person

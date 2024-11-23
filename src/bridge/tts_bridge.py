@@ -50,6 +50,10 @@ class BaseTTSBridge:
         self._ended = True
         self.text_queue.put("", block=False)
         self.audio_queue.put(("", ""), block=False)
+        
+    @property
+    def is_empty(self):
+        return self.text_queue.empty() and self.audio_queue.empty()
 
     def adjust_text(self, text):
         # 02/27などの日付を2月27日などに変換
@@ -191,14 +195,14 @@ class AzureTTSBridge(BaseTTSBridge):
             if text == "":
                 self.get_template_audio("APLOGIZE")
             elif not self.get_template_audio(text):
-                text = self.adjust_text(text)
+                # text = self.adjust_text(text)
                 # 「。」を破線（break）に変換して無音を挿入
-                text_with_breaks = text.replace("。", "。<break time='500ms'/>")
+                # text_with_breaks = text.replace("。", "。<break time='200ms'/>")
                 ssml = f"""
                 <speak version='1.0' xml:lang='ja-JP'>
                     <voice xml:lang='ja-JP' name='ja-JP-NanamiNeural' style='customerservice'>
                         <prosody rate='+10%'>
-                            {text_with_breaks}
+                            {text}
                         </prosody>
                     </voice>
                 </speak>
@@ -225,7 +229,7 @@ class AzureTTSBridge(BaseTTSBridge):
 
     def get_template_audio(self, text):
         flag = False
-        audiofile_candidates = list(template_dir.glob(f"{text.lower()}*.wav"))
+        audiofile_candidates = list(template_dir.glob(f"{text.lower()}.wav"))
         # text = tts_label2text.get(text, text)
         logger.info(f"audiofile_candidates: {audiofile_candidates}")
         if len(audiofile_candidates) > 0:

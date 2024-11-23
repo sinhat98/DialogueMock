@@ -32,6 +32,7 @@ def call_llm(system_prompt, text, json_format=True):
                 "content": text,
             },
         ],
+        temperature=0,  # Set temperature to 0
     )
     output = response.choices[0].message.content
     logger.info(f"Response: {output}")

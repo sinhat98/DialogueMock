@@ -1,9 +1,9 @@
 import gradio as gr
 from copy import deepcopy
 from src.utils import get_custom_logger
-from src.modules.dialogue.dst import RuleDST
-from src.modules.dialogue.nlg import TemplateNLG
-from src.modules.dialogue.utils.template import templates
+from modules.dialogue._dst import RuleDST
+from modules.dialogue._nlg import TemplateNLG
+from modules.dialogue.utils._template import templates
 from src.modules.nlu.streaming_nlu import StreamingNLUModule, EntityLabel
 from src.modules.nlu.prompt import get_base_system_prompt
 from src.bridge.llm_bridge import LLMBridge
@@ -12,6 +12,7 @@ logger = get_custom_logger(__name__)
 
 # 初期設定
 DefinedEntities = [e.value[1] for e in EntityLabel.__members__.values()]
+import pdb
 
 # pdb.set_trace()
 # モジュールの初期化
