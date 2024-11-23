@@ -1,6 +1,5 @@
 import re
 import datetime
-from typing import Dict, List, Tuple
 
 date_patterns = [
     r"(?P<relative_month_ext>先月|今月|来月|再来月)の?(?P<week_number>\d{1})(週目)の?(?P<extended_weekday>月曜日|火曜日|水曜日|木曜日|金曜日|土曜日|日曜日|月曜|火曜|水曜|木曜|金曜|土曜|日曜)",
@@ -95,7 +94,7 @@ person_count_regex = re.compile(person_count_pattern)
 def get_current_time():
     return datetime.datetime.now()
 
-def process_date(text: str) -> Dict[str, str]:
+def process_date(text: str) -> dict[str, str]:
     results = {}
     matches = date_regex.finditer(text)
 
@@ -246,7 +245,7 @@ def process_date(text: str) -> Dict[str, str]:
 
     return results
 
-def process_time(text: str) -> Dict[str, str]:
+def process_time(text: str) -> dict[str, str]:
     results = {}
     matches = time_regex.finditer(text)
 
@@ -305,7 +304,7 @@ def process_time(text: str) -> Dict[str, str]:
 
     return results
 
-def process_person_count(text: str) -> Dict[str, str]:
+def process_person_count(text: str) -> dict[str, str]:
     results = {}
     matches = person_count_regex.finditer(text)
 
