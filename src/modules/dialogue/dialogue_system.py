@@ -376,6 +376,7 @@ class DialogueSystem:
     def _handle_store_questions(self, current_state: dict, user_message: str) -> list[str]:
         llm_response = call_llm(system_prompt_for_faq, user_message, json_format=False)
         if llm_response:
+            llm_response = self._modify_llm_response(llm_response)
             return [llm_response, self.nlg.get_confirmation_prompt(current_state["intent"], current_state["state"])]
         return [self.nlg.get_intent_response(
             current_state["intent"],
@@ -422,6 +423,14 @@ class DialogueSystem:
     
     def _convert_label_to_text(self, label_or_text: str) -> str:
         return tts_label2text.get(label_or_text, label_or_text)
+    
+    def _modify_llm_response(self, response: str) -> str:
+        if "回答:" in response:
+            response = response.replace("回答:", "")
+        if "空文字" in response:
+            response = response.replace("空文字", "")
+        
+        return response
     
     def is_complete(self):
         return self.dialogue_state == DialogueState.COMPLETE
