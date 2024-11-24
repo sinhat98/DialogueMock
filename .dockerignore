@@ -8,6 +8,7 @@
 .ruff_cache
 .venv
 *.tmp
+*.csv
 **/cc.ja.300*
 **/*.pt
 cyberagent-285-03dff0795e3a.json
