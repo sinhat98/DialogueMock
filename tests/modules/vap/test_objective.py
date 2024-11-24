@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import torch.nn as nn
 
 from src.modules.vap.vap import ObjectiveVAP as NumpyVAP
 from src.modules.vap.objective import ObjectiveVAP as PyTorchVAP

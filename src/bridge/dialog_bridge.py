@@ -5,16 +5,17 @@ from src.modules import (
     StreamingNLUModule,
     VolumeBasedVADModel,
 )
-from src.modules.dialogue.utils.template import tts_label2text
+from modules.dialogue.utils._template import tts_label2text
 from src.utils import get_custom_logger, ulaw_decode
 from copy import deepcopy
 import json
 import asyncio
 from enum import IntEnum
 import numpy as np
-
+import queue
+import threading
 from abc import ABC, abstractmethod
-
+import time
 
 logger = get_custom_logger(__name__)
 
@@ -197,7 +198,7 @@ class DialogBridge(ABC):
 
         try:
             if queue_size > 0 and not self.bot_speak:
-                txt, _out = tts_bridge.audio_queue.get()
+                txt, _out, _ = tts_bridge.audio_queue.get()
                 self.set_barge_in(txt)
                 txt = tts_label2text.get(txt, txt)
                 logger.info(f"Send Bot: {txt}")
@@ -512,7 +513,6 @@ class DialogBridgeWithFastSFAndVolumeBasedEoT(DialogBridge):
 
 
 class DialogBridgeWithVAP(DialogBridge):
-
     def __init__(self, default_state: dict = {}):
         super().__init__(default_state=default_state)
         from src.bridge.vap_bridge import VAPBridge
@@ -522,6 +522,37 @@ class DialogBridgeWithVAP(DialogBridge):
             frame_rate=20,
             context_len_sec=2.5,
         )
+
+    async def send_tts(self, ws, tts_bridge, firestore_client):
+        try:
+            if tts_bridge.audio_queue.qsize() > 0 and not self.bot_speak:
+                txt, audio_payload, audio_array = tts_bridge.audio_queue.get()
+                self.set_barge_in(txt)
+                txt = tts_label2text.get(txt, txt)
+                logger.info(f"Send Bot: {txt}")
+                self.store_event(firestore_client, txt, "bot")
+
+                self.vap_bridge.add_bot_audio(audio_array)
+
+                # Websocketへの送信
+                await asyncio.wait_for(ws.send_text(audio_payload), timeout=2)
+                await asyncio.wait_for(
+                    ws.send_text(
+                        json.dumps(
+                            {
+                                "event": "mark",
+                                "streamSid": self.stream_sid,
+                                "mark": {"name": "continue"},
+                            }
+                        )
+                    ),
+                    timeout=2,
+                )
+                self.bot_speak = True
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout in send_tts")
+            pass
 
     def turn_taking(self, *args):
         # VAPの結果を取得
@@ -549,16 +580,10 @@ class DialogBridgeWithVAP(DialogBridge):
             try:
                 audio_chunk = ulaw_decode(chunk)
 
-                if self.bot_speak:
-                    # システム発話中は、システム音声のみを処理し、ユーザー側は無音を与える
-                    self.vap_bridge.add_bot_audio(audio_chunk)
-                    silence_chunk = np.zeros_like(audio_chunk)
-                    self.vap_bridge.add_user_audio(silence_chunk)
-                else:
-                    # システム発話していない時は、ユーザー音声のみを処理し、システム側は無音を与える
+                if not self.bot_speak:
                     self.vap_bridge.add_user_audio(audio_chunk)
-                    silence_chunk = np.zeros_like(audio_chunk)
-                    self.vap_bridge.add_bot_audio(silence_chunk)
+                    # silence_chunk = np.zeros_like(audio_chunk)
+                    # self.vap_bridge.add_bot_audio(silence_chunk)
 
             except Exception as e:
                 logger.error(f"Error processing audio chunk: {e}")

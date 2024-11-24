@@ -1,13 +1,12 @@
 import os
 import json
 import uuid
-from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore import Client, SERVER_TIMESTAMP
-from src.utils import ROOT_DIR, get_custom_logger
+from src.utils import get_custom_logger
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 

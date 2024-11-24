@@ -1,7 +1,7 @@
 .PHONY: run
 
 run:
-	poetry run uvicorn main:app --reload
+	poetry run uvicorn main:app --reload --port 8080
 
 .PHONY: export
 export:

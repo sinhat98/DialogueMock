@@ -9,7 +9,6 @@ from twilio.rest import Client
 from dotenv import load_dotenv
 from typing import Any
 
-import aiohttp
 import json
 import hashlib
 

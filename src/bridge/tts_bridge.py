@@ -26,11 +26,12 @@ load_dotenv()
 
 template_dir = Path(__file__).parents[1] / "modules/dialogue/utils/template_audio"
 
+
 # 共通の親クラス
 class BaseTTSBridge:
     def __init__(self):
         self.text_queue = queue.Queue()
-        self.audio_queue = queue.Queue()
+        self.audio_queue: queue.Queue[tuple[str, str, AudioSegment]] = queue.Queue()
         self._ended = False
         self.stream_sid = None
 
@@ -49,6 +50,10 @@ class BaseTTSBridge:
         self._ended = True
         self.text_queue.put("", block=False)
         self.audio_queue.put(("", ""), block=False)
+        
+    @property
+    def is_empty(self):
+        return self.text_queue.empty() and self.audio_queue.empty()
 
     def adjust_text(self, text):
         # 02/27などの日付を2月27日などに変換
@@ -190,34 +195,43 @@ class AzureTTSBridge(BaseTTSBridge):
             if text == "":
                 self.get_template_audio("APLOGIZE")
             elif not self.get_template_audio(text):
-                text = self.adjust_text(text)
+                # text = self.adjust_text(text)
                 # 「。」を破線（break）に変換して無音を挿入
-                text_with_breaks = text.replace("。", "。<break time='500ms'/>")
+                # text_with_breaks = text.replace("。", "。<break time='200ms'/>")
                 ssml = f"""
                 <speak version='1.0' xml:lang='ja-JP'>
                     <voice xml:lang='ja-JP' name='ja-JP-NanamiNeural' style='customerservice'>
                         <prosody rate='+10%'>
-                            {text_with_breaks}
+                            {text}
                         </prosody>
                     </voice>
                 </speak>
                 """
                 result = self.client.speak_ssml_async(ssml).get()
-                audio = AudioSegment.from_file(io.BytesIO(result.audio_data), format="wav")
+                audio = AudioSegment.from_file(
+                    io.BytesIO(result.audio_data), format="wav"
+                )
                 audio = audio.set_frame_rate(8000)
                 audio_payload = self.trans4twilio(audio)
                 out_data = self.get_twilio_media_stream(audio_payload, self.stream_sid)
-                self.audio_queue.put((text, out_data), block=False)
+                self.audio_queue.put(
+                    (
+                        text,
+                        out_data,
+                        # np.ndarray型のaudioを返す
+                        audio.get_array_of_samples(),
+                    ),
+                    block=False,
+                )
         except Exception:
             self.get_template_audio("APLOGIZE")
             logger.warning("send apology message due to Azure TTS error")
-            
-            
+
     def get_template_audio(self, text):
         flag = False
-        audiofile_candidates = list(template_dir.glob(f"{text.lower()}*.wav"))
+        audiofile_candidates = list(template_dir.glob(f"{text.lower()}.wav"))
         # text = tts_label2text.get(text, text)
-        logger.info(f"audiofile_candidates: {audiofile_candidates}") 
+        logger.info(f"audiofile_candidates: {audiofile_candidates}")
         if len(audiofile_candidates) > 0:
             audiofile = random.choice(audiofile_candidates)
             logger.info(audiofile)
@@ -225,7 +239,15 @@ class AzureTTSBridge(BaseTTSBridge):
             audio = audio.set_frame_rate(8000)
             audio_payload = self.trans4twilio(audio)
             out_data = self.get_twilio_media_stream(audio_payload, self.stream_sid)
-            self.audio_queue.put((text, out_data), block=False)
+            self.audio_queue.put(
+                (
+                    text,
+                    out_data,
+                    # np.ndarray型のaudioを返す
+                    audio.get_array_of_samples(),
+                ),
+                block=False,
+            )
             flag = True
         return flag
 

@@ -27,7 +27,7 @@ def get_custom_logger(name, level=logging.DEBUG):
     """
 
     formatter = AbsolutePathFormatter(
-        fmt="%(levelname)s:%(name)s:[%(pathname)s - %(lineno)d]: %(message)s"
+        fmt='%(levelname)s:%(name)s:"%(pathname)s", line %(lineno)d: %(message)s'
     )
 
     handler = logging.StreamHandler(sys.stdout)

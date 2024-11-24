@@ -89,70 +89,92 @@ class LLMBridge:
                     },
                 ],
             )
-        return response.choices[0].message.content
+        output = response.choices[0].message.content
+        logger.info(f"Response: {output}")
+        return output
+
+def get_sf_llm_bridge():
+    return LLMBridge(system_prompt_for_slot_filling, json_format=True)
+
+
+def get_faq_llm_bridge():
+    return LLMBridge(system_prompt_for_faq)
 
 
 if __name__ == "__main__":
-    import threading
-    import time
+    from src.modules.nlu.prompt import get_base_system_prompt
+    from src.modules.dialogue.utils.template import templates
 
-    llm_bridge = LLMBridge(system_prompt_for_faq)
-    t_llm = threading.Thread(target=llm_bridge.response_loop)
-    t_llm.start()
+    initial_state = templates["initial_state"]
+    prompt = get_base_system_prompt(initial_state)
+    llm_bridge = LLMBridge(prompt, json_format=True)
+    sample_text = "はいお願いします"
+    response = llm_bridge.call_llm(sample_text)
+    logger.info(f"Response: {response}")
+    print(type(response))
+    response_dict = eval(response)
+    print(type(response_dict))
 
-    # 例1: リクエストとレスポンスの処理
-    llm_bridge.add_request("2席で別々のコースを注文できますか？")
+    # import threading
+    # import time
 
-    tic = time.time()
-    response = llm_bridge.get_response(timeout=10)  # 最大10秒待機
-    if response:
-        logger.info(f"Response: {response}")
-    else:
-        logger.info("No response received.")
-
-    toc = time.time() - tic
-    logger.info(f"Elapsed time: {toc}")
-
-    # 例2: FAQにない質問の例
-    llm_bridge.add_request("ディナーの営業時間は何時からですか？")
-    tic = time.time()
-    response = llm_bridge.get_response(timeout=10)
-    if response:
-        logger.info(f"Response: {response}")
-    else:
-        logger.info("No response received.")
-    toc = time.time() - tic
-    logger.info(f"Elapsed time: {toc}")
-
-    llm_bridge.terminate()
-
-    # スロットフィリングのテスト
-    llm_bridge = LLMBridge(system_prompt_for_slot_filling, json_format=True)
+    # llm_bridge = LLMBridge(system_prompt_for_faq)
     # t_llm = threading.Thread(target=llm_bridge.response_loop)
     # t_llm.start()
 
-    tic = time.time()
-    response = llm_bridge.call_llm("来週の土曜日の11時からお願いします。")
-    if response:
-        logger.info(f"Response: {response}")
-    else:
-        logger.info("No response received.")
-    toc = time.time() - tic
-    logger.info(f"Elapsed time: {toc}")
+    # # 例1: リクエストとレスポンスの処理
+    # llm_bridge.add_request("2席で別々のコースを注文できますか？")
 
-    tic = time.time()
-    response = llm_bridge.call_llm("次の土曜日の13時から2人でお願いします。")
-    print(response)
-    import json
+    # tic = time.time()
+    # response = llm_bridge.get_response(timeout=10)  # 最大10秒待機
+    # if response:
+    #     logger.info(f"Response: {response}")
+    # else:
+    #     logger.info("No response received.")
 
-    json_response = json.loads(response)
-    print(json_response)
-    if response:
-        logger.info(f"Response: {response}")
-    else:
-        logger.info("No response received.")
-    toc = time.time() - tic
-    logger.info(f"Elapsed time: {toc}")
+    # toc = time.time() - tic
+    # logger.info(f"Elapsed time: {toc}")
 
-    llm_bridge.terminate()
-    t_llm.join()
+    # # 例2: FAQにない質問の例
+    # llm_bridge.add_request("ディナーの営業時間は何時からですか？")
+    # tic = time.time()
+    # response = llm_bridge.get_response(timeout=10)
+    # if response:
+    #     logger.info(f"Response: {response}")
+    # else:
+    #     logger.info("No response received.")
+    # toc = time.time() - tic
+    # logger.info(f"Elapsed time: {toc}")
+
+    # llm_bridge.terminate()
+
+    # # スロットフィリングのテスト
+    # llm_bridge = LLMBridge(system_prompt_for_slot_filling, json_format=True)
+    # # t_llm = threading.Thread(target=llm_bridge.response_loop)
+    # # t_llm.start()
+
+    # tic = time.time()
+    # response = llm_bridge.call_llm("来週の土曜日の11時からお願いします。")
+    # if response:
+    #     logger.info(f"Response: {response}")
+    # else:
+    #     logger.info("No response received.")
+    # toc = time.time() - tic
+    # logger.info(f"Elapsed time: {toc}")
+
+    # tic = time.time()
+    # response = llm_bridge.call_llm("次の土曜日の13時から2人でお願いします。")
+    # print(response)
+    # import json
+
+    # json_response = json.loads(response)
+    # print(json_response)
+    # if response:
+    #     logger.info(f"Response: {response}")
+    # else:
+    #     logger.info("No response received.")
+    # toc = time.time() - tic
+    # logger.info(f"Elapsed time: {toc}")
+
+    # llm_bridge.terminate()
+    # t_llm.join()

@@ -1,149 +1,253 @@
+# src/modules/dialogue/dst.py
+
+from typing import Dict, List, Optional, Set
 from src.utils import get_custom_logger
+from src.modules.dialogue.utils.constants import RoutingResult, DialogueState, Intent, GLOBAL_INTENTS
+
 logger = get_custom_logger(__name__)
 
+
 class RuleDST:
-
-    def __init__(self, nlg_template, state_template):
-        self.action_types = list(nlg_template["action_type"].keys())
-        self.inheriting_slots = {k: v["inheriting_slot"] for k, v in nlg_template["action_type"].items()}
-        self.unrequited_slots = {k: v["unrequited_slot"] for k, v in nlg_template["action_type"].items()}
-        self.slots = list(next(iter(nlg_template["action_type"].values()))["slot"].keys())
-
-        self.initial_state = {s: state_template.get(s, "") for s in self.slots}
-        self.state_stack = []
+    def __init__(self, templates: Dict):
+        """
+        対話状態を管理するDSTの初期化
+        Args:
+            templates (Dict): 対話管理に必要なテンプレート情報
+        """
+        self.templates = templates
+        self.scenes = templates["scenes"]
+        # 状態の初期化
+        self.reset()
         
-        logger.info(f"Initial state: {self.initial_state}")
+        logger.info(f"Initial state: {self.state}")
+
+    def reset(self):
+        """状態を初期化"""
+        self.current_intent = None
+        self.state = self.templates["initial_state"].copy()
+        self.previous_state = None
+        self.dialogue_state = DialogueState.START
+        self.correction_slot = None
+        logger.info("Reset dialogue state")
+
+
+    def route_intent(self, nlu_out: Dict) -> RoutingResult:
+        """
+        NLU出力からintentを判定し、対話をルーティング
+        """
+        intent = nlu_out.get("intent")
+        if not intent:
+            logger.warning("No intent detected in NLU output")
+            return RoutingResult.NO_INTENT
         
+        if intent == Intent.OTHER:
+            return RoutingResult.FALLBACK
 
-    def _validate_action_type(self, action_type):
-        assert action_type in self.action_types, "Unknown action type detected."
+        # 確認シーンでの特別な処理
+        if self.dialogue_state == DialogueState.WAITING_CONFIRMATION:
+            if intent == Intent.YES:
+                if self.current_intent == Intent.ASK_ABOUT_STORE:
+                    return RoutingResult.CONTINUE
+                else:
+                    return RoutingResult.CONFIRM
+            elif intent == Intent.CHANGE:
+                return RoutingResult.CHANGE
+            elif intent == Intent.NO:
+                return RoutingResult.CANCEL
+            elif intent in GLOBAL_INTENTS:
+                # self.dialogue_state = DialogueState.START
+                if intent != self.current_intent:
+                    self.current_intent = intent
+                return RoutingResult.INTENT_CHANGED
+        if intent in GLOBAL_INTENTS and intent != self.current_intent:
+            logger.info(f"Intent changed from {self.current_intent} to {intent}")
+            self.current_intent = intent
+            return RoutingResult.INTENT_CHANGED
 
-    def _initial_update_state(self, nlu_out):
-        state = {k: (v if v else self.initial_state[k]) for k, v in nlu_out["slot"].items()}
-        self.state_stack.append((nlu_out["action_type"], state))
+        return RoutingResult.INTENT_UNCHANGED
 
-    def update_state(self, nlu_out):
-        logger.debug(f"Pre state: {self.state_stack}")
+    def get_required_slots(self) -> List[str]:
+        """
+        現在のintentで必要なスロットを取得
+        Returns:
+            List[str]: 必須スロットのリスト
+        """
+        if not self.current_intent or self.current_intent in [RoutingResult.CONFIRM, RoutingResult.CHANGE, RoutingResult.CANCEL]:
+            return []
+        return self.scenes.get(self.current_intent, {}).get("required_slots", [])
+
+    def get_optional_slots(self) -> List[str]:
+        """
+        現在のintentで任意のスロットを取得
+        Returns:
+            List[str]: 任意スロットのリスト
+        """
+        if not self.current_intent or self.current_intent in [RoutingResult.CONFIRM, RoutingResult.CHANGE, RoutingResult.CANCEL]:
+            return []
+        return self.scenes.get(self.current_intent, {}).get("optional_slots", [])
+
+    def get_missing_slots(self) -> List[str]:
+        """
+        未入力の必須スロットを取得
+        Returns:
+            List[str]: 未入力の必須スロットのリスト
+        """
+        if self.dialogue_state == "CORRECTION" and self.correction_slot:
+            return [self.correction_slot]
+        required_slots = self.get_required_slots()
+        return [slot for slot in required_slots if not self.state.get(slot)]
+
+    def get_updated_slots(self) -> Set[str]:
+        """
+        前回の状態から更新されたスロットを取得
+        Returns:
+            Set[str]: 更新されたスロットの集合
+        """
+        if not self.previous_state:
+            return set(k for k, v in self.state.items() if v)
         
-        if not self.state_stack:
-            self._initial_update_state(nlu_out)
-            self.fill_unrequited_state()
-            return "CONVERSATION_CONTINUE"
+        return {
+            slot for slot, value in self.state.items()
+            if value and value != self.previous_state.get(slot)
+        }
+        
+    def get_updated_slots_dict(self) -> Dict[str, str]:
+        """
+        前回の状態から更新されたスロットと値の辞書を取得
+        Returns:
+            Dict[str, str]: 更新されたスロットと値の辞書
+        """
+        updated_slots = self.get_updated_slots()
+        return {slot: self.state[slot] for slot in updated_slots}
+
+    def update_slot_values(self, slot_values: Dict[str, str]):
+        """
+        スロット値を更新
+        Args:
+            slot_values (Dict[str, str]): 更新するスロットと値の辞書
+        """
+        for slot, value in slot_values.items():
+            if value:
+                self.state[slot] = value
+                logger.debug(f"Updated slot {slot}: {value}")
+
+    def set_correction_slot(self, slot: str):
+        """
+        修正対象のスロットを設定
+        Args:
+            slot (str): 修正対象のスロット
+        """
+        self.correction_slot = slot
+        self.dialogue_state = "CORRECTION"
+        logger.info(f"Set correction slot: {slot}")
+
+    def update_state(self, nlu_out: Dict) -> DialogueState:
+        """
+        対話状態を更新
+        """
+        self.previous_state = self.state.copy()
+        self.update_slot_values(nlu_out.get("slot", {}))
+
+        # intentのルーティング
+        routing_result = self.route_intent(nlu_out)
+        logger.info(f"Routing result: {routing_result}")
+        
+        if routing_result in [RoutingResult.NO_INTENT, RoutingResult.INVALID_INTENT]:
+            self.dialogue_state = DialogueState.ERROR
+            return self.dialogue_state
+        
+        if routing_result == RoutingResult.FALLBACK:
+            self.dialogue_state = DialogueState.FALLBACK
+            return self.dialogue_state
+        
+        
+        # 通常の対話処理
+        if routing_result == RoutingResult.INTENT_CHANGED:
+            self.dialogue_state = DialogueState.INTENT_CHANGED
+            return self.dialogue_state
+        
+        # 確認待ち状態での処理
+        if self.dialogue_state == DialogueState.WAITING_CONFIRMATION:
+            if routing_result == RoutingResult.CONFIRM:
+                self.dialogue_state = DialogueState.COMPLETE
+            elif routing_result == RoutingResult.CHANGE:
+                self.dialogue_state = DialogueState.CORRECTION
+            elif routing_result == RoutingResult.CANCEL:
+                self.dialogue_state = DialogueState.CANCELLED
+            elif routing_result == RoutingResult.CONTINUE:
+                self.dialogue_state = DialogueState.CONTINUE
+            return self.dialogue_state
+
+        # 修正状態での処理
+        if self.dialogue_state == DialogueState.CORRECTION:
+            if self.correction_slot and self.state.get(self.correction_slot):
+                self.dialogue_state = DialogueState.WAITING_CONFIRMATION
+                self.correction_slot = None
+            return self.dialogue_state
+        
+        if self.is_slots_filled:
+            self.dialogue_state = DialogueState.SLOTS_FILLED
         else:
-            if nlu_out["action_type"] == "":
-                action, state = self.state_stack.pop()
-                state.update({k: v for k, v in nlu_out["slot"].items() if v})
-                self.state_stack.append((action, state))
-                logger.debug(f"Current state: {self.state_stack}")
-                return "CONVERSATION_CONTINUE"
-            else:
-                self._initial_update_state(nlu_out)
-                return "SWITCH_SCENE"
+            self.dialogue_state = DialogueState.CONTINUE
 
-    def inheriting_state(self):
-        assert len(self.state_stack) > 1, "No previous state to inherit from."
-        curr_action, curr_state = self.state_stack.pop()
-        prev_action, prev_state = self.state_stack[-1]
-        for slot in self.inheriting_slots[curr_action]:
-            curr_state[slot] = prev_state[slot]
-        self.state_stack.append((curr_action, curr_state))
+            
+        # logger.info(f"Updated dialogue state: {self.dialogue_state}")
 
-    def fill_unrequited_state(self):
-        action, state = self.state_stack.pop()
-        for slot in self.unrequited_slots[action]:
-            state[slot] = "UNREQUITED_SLOT"
-        self.state_stack.append((action, state))
-
-    def del_state(self, del_slots):
-        action, state = self.state_stack.pop()
-        for slot in del_slots:
-            state[slot] = ""
-        self.state_stack.append((action, state))
-
-    # クラスメソッドにチェック用のメソッドを追加
-    def is_complete(self):
-        if not self.state_stack:
-            return False
-        _, state = self.state_stack[-1]
-        return all(state.values())
-
-    # check_complete メソッドはそのままにして、新しいメソッドを呼び出す
-    def check_complete(self):
-        if self.is_complete():
-            self.state_stack.pop()
-            return "CONVERSATION_END" if not self.state_stack else "BACK_PREV_SCENE"
-        return "CONVERSATION_CONTINUE"
-
-
-if __name__ == "__main__":
-    from src.dialogue.utils.template import templates
-    from src.dialogue.module.nlg import TemplateNLG
-    from copy import deepcopy
+        return self.dialogue_state
     
-    # state_template = {
-    #     "店舗": "渋谷店",
-    #     "日付": "",
-    #     "時間": "",
-    #     "人数": "",
-    #     "名前": "",
-    # }
+    @property
+    def is_slots_filled(self) -> bool:
+        return len(self.get_required_slots()) > 0 and not self.get_missing_slots()
 
-
-    state_template = {
-        "名前": "",
-    }
-
-    # RuleDST と TemplateNLG の初期化
-    dst = RuleDST(templates, state_template)
-    nlg = TemplateNLG(templates)
     
-    # 初期状態の確認
-    print("初期状態:", dst.initial_state)
-    print(dst.state_stack)
+    def set_dialogue_state(self, state: str):
+        """
+        対話状態を設定
+        Args:
+            state (str): 対話状態
+        """
+        self.dialogue_state = state
+        logger.info(f"Set dialogue state: {state}")
 
-    # 最初のユーザー入力を処理 日付と時間を一度に指定
-    print("\nユーザー: 10/1の15:00に予約したいのですが")
-    state = deepcopy(dst.initial_state)
-    state["日付"] = "10/1"
-    state["時間"] = "15:00"
-    # prev_stateとstateを比較して変更があったslot_keyを取得
-    nlu_output = {"action_type": "新規予約", "slot": state}
-    prev_state = deepcopy(dst.state_stack[-1][1]) if dst.state_stack else dst.initial_state
-    dst.update_state(nlu_output)
-    
-    implicit_confirmation = nlg.get_confirmation_response((nlu_output["action_type"], state), prev_state)
-    print("システム:", implicit_confirmation)
-    response = nlg.get_response(dst.state_stack[-1])
-    print("システム:", response)
-    print("現在の状態:", dst.state_stack)
+    def get_current_state(self) -> Dict:
+        """
+        現在の状態を取得
+        Returns:
+            Dict: 現在の状態の情報
+        """
+        return {
+            "intent": self.current_intent,
+            "state": self.state.copy(),
+            "previous_state": self.previous_state.copy() if self.previous_state else None,
+            "dialogue_state": self.dialogue_state,
+            "missing_slots": self.get_missing_slots(),
+            "updated_slots": list(self.get_updated_slots()),
+            "required_slots": self.get_required_slots(),
+            "optional_slots": self.get_optional_slots(),
+            "correction_slot": self.correction_slot
+        }
 
-    # 追加のユーザー入力を処理 人数のみ
-    print("\nユーザー: 2人でお願いします。")
-    state["人数"] = "2"
-    nlu_output = {"action_type": "", "slot": state}
-    prev_state = deepcopy(dst.state_stack[-1][1])
-    dst.update_state(nlu_output)
-    implicit_confirmation = nlg.get_confirmation_response((dst.state_stack[-1][0], state), prev_state)
-    print("システム:", implicit_confirmation)
-    response = nlg.get_response(dst.state_stack[-1])
-    print("システム:", response)
-    print("現在の状態:", dst.state_stack)
-    
-    # 追加のユーザー入力を処理 名前のみ
-    print("\nユーザー: 山田です。")
-    state["名前"] = "山田"
-    nlu_output = {"action_type": "", "slot": state}
-    prev_state = deepcopy(dst.state_stack[-1][1])
-    dst.update_state(nlu_output)
-    implicit_confirmation = nlg.get_confirmation_response((dst.state_stack[-1][0], state), prev_state)
-    print("システム:", implicit_confirmation)
-    response = nlg.get_response(dst.state_stack[-1])
-    print("システム:", response)
-    print("現在の状態:", dst.state_stack)
-    
-    # 確認応答
-    print("\nシステム: ご予約を確定してもよろしいでしょうか？")
-    user_confirm = "はい"  # この応答はユーザーが行うと仮定しています。
-    confirm_response = nlg.get_confirm_response(dst.state_stack[-1][0], user_confirm)
-    print("ユーザー:", user_confirm)
-    print("システム:", confirm_response)
+
+    def reset_state(self, keep_slots: Optional[List[str]] = None):
+        """
+        状態を部分的にリセット
+        Args:
+            keep_slots (Optional[List[str]]): 値を保持するスロットのリスト
+        """
+        kept_values = {}
+        if keep_slots:
+            kept_values = {
+                slot: self.state[slot]
+                for slot in keep_slots
+                if slot in self.state
+            }
+
+        self.state = self.templates["initial_state"].copy()
+        self.state.update(kept_values)
+        self.previous_state = None
+        self.dialogue_state = "CONVERSATION_CONTINUE"
+        self.correction_slot = None
+        
+        logger.info("Reset dialogue state")
+        if keep_slots:
+            logger.info(f"Kept values for slots: {kept_values}")

@@ -1,4 +1,3 @@
-from datetime import datetime
 from src.modules.nlu.validation import validate_date, validate_number_of_people, validate_time
 
 def test_validate_time():

@@ -17,17 +17,10 @@ from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
 from twilio.rest.api.v2010.account.call import CallInstance
 from twilio.base import exceptions as twilio_exceptions
 
-from src.modules.nlu.prompt import system_prompt_for_faq, system_prompt_for_slot_filling
 from src.modules.dialogue.utils.template import tts_label2text
+from src.modules.dialogue.utils.constants import TTSLabel
 from src.bridge import ASRBridge, TTSBridge, LLMBridge
-from src.bridge.dialog_bridge import (
-    DialogBridgeWithLLMSF as DialogBridgeV1,
-    DialogBridgeWithFastSF as DialogBridgeV2,
-    DialogBridgeWithFastSFAndVolumeBasedEoT as DialogBridgeV3,
-    DialogBridgeWithLLMSFAndVolumeBasedEoT as DialogBridgeV4,
-    DialogBridgeWithminiLLMSF as DialogBridgeV5,
-    DialogBridgeWithVAP as DialogBridgeV6,
-)
+from src.bridge.dialog_bridge_with_ic import DialogBridgeWithIntentClassification
 
 
 from src.utils.twilio_account import TwilioAccount
@@ -40,11 +33,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 import hashlib
 
+import pandas as pd
+
 
 load_dotenv()
 
 from src.utils import get_custom_logger
 from src.utils.firestore import FirestoreClient
+from src.utils.conversation_log import ConversationLogger
 
 logger = get_custom_logger(__name__)
 
@@ -64,16 +60,6 @@ PROJECT_ID = os.getenv("PROJECT_ID")
 USE_INITIAL_ROUTING = os.getenv("USE_INITIAL_ROUTING", "false").lower() == "true"
 DEFAULT_DIALOG_PATTERN = int(os.getenv("DEFAULT_DIALOG_PATTERN", "1"))
 
-dialog_patterns = [
-    DialogBridgeV1,
-    DialogBridgeV2,
-    DialogBridgeV3,
-    DialogBridgeV4,
-    DialogBridgeV5,
-    DialogBridgeV6,
-]
-
-
 async def get_from_phone_number(client: Client, call_sid: str) -> str:
     call = client.calls(call_sid).fetch()
     return call._from
@@ -82,6 +68,7 @@ async def get_from_phone_number(client: Client, call_sid: str) -> str:
 async def get_to_phone_number(client: Client, call_sid: str) -> str:
     call = client.calls(call_sid).fetch()
     return call.to
+
 
 
 @app.post("/twiml")
@@ -102,7 +89,7 @@ async def twiml():
     )
 
 
-def init_conversation_events(firestore_client, call_sid, customer_phone_number):
+async def init_conversation_events(firestore_client, call_sid, customer_phone_number):
     conversation_id = hashlib.sha1(call_sid.encode()).hexdigest()
     env = ENV
     tenant_id = TENANT_ID
@@ -119,16 +106,16 @@ def init_conversation_events(firestore_client, call_sid, customer_phone_number):
         "updated_at": firestore_client.get_timestamp(),
     }
     tenant_ref = firestore_client.get_tenant_ref(env, tenant_id)
-    logger.info(f"Tenant ref: {tenant_ref.path}")
+    logger.info("Tenant ref: %s", tenant_ref.path)
 
     customer_ref = firestore_client.create_customer(
         tenant_ref, customer_id, customer_data
     )
-    logger.info(f"Customer ref: {customer_ref.path}")
+    logger.info("Customer ref: %s", customer_ref.path)
 
     # プロジェクトの参照を取得
     project_ref = firestore_client.get_project_ref(customer_ref, project_id)
-    logger.info(f"Project ref: {project_ref.path}")
+    logger.info("Project ref: %s", project_ref.path)
 
     # 対話データを作成
     CALLING = "自動応答中"
@@ -155,9 +142,32 @@ def init_conversation_events(firestore_client, call_sid, customer_phone_number):
     }
     firestore_client.set_conversation_ref(project_ref, conversation_id)
     firestore_client.create_conversation(conversation_data)
-    logger.info(f"Conversation ref: {firestore_client.conversation_ref.path}")
+    logger.info("Conversation ref: %s", firestore_client.conversation_ref.path)
 
     return firestore_client
+
+
+def get_gcs_path_from_params(subdomain: str, project_id: str, customer_phone_number: str, call_sid: str) -> str:
+    """
+    URLパラメータからGCSパスを構築する
+    
+    Args:
+        subdomain: テナントのサブドメイン
+        project_id: プロジェクトID
+        customer_phone_number: 顧客の電話番号
+        call_sid: 通話ID
+
+    Returns:
+        str: GCSパス
+    """
+    # 電話番号からcustomer_idを生成
+    customer_id = hashlib.sha1(f"+{customer_phone_number}".encode()).hexdigest()
+    # call_sidからconversation_idを生成
+    conversation_id = hashlib.sha1(call_sid.encode()).hexdigest()
+    
+    # GCSパスを構築
+    gcs_path = f"{subdomain}/{project_id}/{customer_id}/{conversation_id}"
+    return gcs_path
 
 
 @app.post("/recording/twilio2gcs")
@@ -217,28 +227,6 @@ def delete_twilio_call_recording(
         return None
 
 
-async def initial_routing(asr_bridge):
-    dialog_bridge_cls = None
-    pattern = None
-    transcription = asr_bridge.get_transcription()
-    if "1" in transcription or "一" in transcription:
-        dialog_bridge_cls = DialogBridgeV1
-        pattern = 1
-    elif "2" in transcription or "二" in transcription:
-        dialog_bridge_cls = DialogBridgeV2
-        pattern = 2
-    elif "3" in transcription or "三" in transcription:
-        dialog_bridge_cls = DialogBridgeV3
-        pattern = 3
-    elif "4" in transcription or "四" in transcription:
-        dialog_bridge_cls = DialogBridgeV4
-        pattern = 4
-    elif "5" in transcription or "五" in transcription:
-        dialog_bridge_cls = DialogBridgeV5
-        pattern = 5
-    return dialog_bridge_cls, pattern
-
-
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     logger.info("WS connection opened")
@@ -256,13 +244,10 @@ async def websocket_endpoint(ws: WebSocket):
 
     asr_bridge = ASRBridge()
     tts_bridge = TTSBridge()
-    llm_bridge = LLMBridge(system_prompt_for_faq)
 
     t_tts = threading.Thread(target=tts_bridge.response_loop)
-    t_llm = threading.Thread(target=llm_bridge.response_loop)
 
     t_tts.start()
-    t_llm.start()
 
     import asyncio
 
@@ -290,6 +275,16 @@ async def websocket_endpoint(ws: WebSocket):
     logger.info(
         f"aim_phone_number: {aim_phone_number}, customer_phone_number: {customer_phone_number}"
     )
+    
+    conversation_logger = ConversationLogger(call_sid)
+    logger.info(f"Conversation logger created {conversation_logger}")
+    gcs_conversation_log_path = get_gcs_path_from_params(
+        subdomain=os.environ.get("TENANT_SUBDOMAIN"),
+        project_id=PROJECT_ID,
+        customer_phone_number=customer_phone_number.replace('+', ''),
+        call_sid=call_sid
+    ) + "/conversation_log"
+
 
     recording_callback_url = f"https://{APP_URL}/recording/twilio2gcs?project_id={PROJECT_ID}&tenant_id={TENANT_ID}&customer_phone_number={customer_phone_number.replace('+', '')}#rc=2&rp=all"
     # client.calls(call_sid).recordings.create(
@@ -299,60 +294,21 @@ async def websocket_endpoint(ws: WebSocket):
     # )
 
     firestore_client = FirestoreClient()
-    firestore_client = init_conversation_events(
+    firestore_client = await init_conversation_events(
         firestore_client, call_sid, customer_phone_number
     )
 
     tts_bridge.set_connect_info(stream_sid)
     logger.info("Set connect info")
 
-    ####  For initial routing  ####
-    llm_bridge_for_slot_filling = None
-    if USE_INITIAL_ROUTING:
-        tts_bridge.add_response("SELECT")
-        txt, out = tts_bridge.audio_queue.get()
-        txt = tts_label2text.get(txt, txt)
-        logger.info(f"Send Bot: {txt}")
-        event_data = {
-            "message": txt,
-            "sender_type": "bot",
-            "entity": {},
-            "is_ivr": False,
-            "created_at": firestore_client.get_timestamp(),
-        }
-        firestore_client.add_conversation_event(event_data)
-        await ws.send_text(out)
-        threading.Thread(target=asr_bridge.start).start()
-        dialog_pattern = None
-        while dialog_pattern is None:
-            data = await ws.receive_json()
-            if data["event"] == "media":
-                asr_bridge.add_request(base64.b64decode(data["media"]["payload"]))
-            dialog_bridge_cls, dialog_pattern = await initial_routing(asr_bridge)
-        asr_bridge.terminate()
-        asr_bridge = ASRBridge()
-        logger.info(f"ASR bridge reinitialized transcript {asr_bridge.transcription}")
-
-        dialog_bridge = dialog_bridge_cls()
-        dialog_bridge.set_stream_sid(stream_sid)
-
-        if dialog_pattern == 1 or dialog_pattern == 4 or dialog_pattern == 5:
-            llm_bridge_for_slot_filling = LLMBridge(
-                system_prompt_for_slot_filling, json_format=True
-            )
-            threading.Thread(target=llm_bridge_for_slot_filling.response_loop).start()
-
-        tts_bridge.add_response(f"対話パターン{dialog_pattern}が選択されました")
-        await dialog_bridge.send_tts(ws, tts_bridge, firestore_client)
-    else:
-        dialog_bridge = dialog_patterns[DEFAULT_DIALOG_PATTERN - 1]()
-        dialog_bridge.set_stream_sid(stream_sid)
+    dialog_bridge = DialogBridgeWithIntentClassification()
+    dialog_bridge.set_stream_sid(stream_sid)
 
     #####################################
+    
+    tts_bridge.add_response(dialog_bridge.get_initial_message())
 
-    tts_bridge.add_response("INITIAL")
-
-    await dialog_bridge.send_tts(ws, tts_bridge, firestore_client)
+    await dialog_bridge.send_tts(ws, tts_bridge, firestore_client, conversation_logger)
     threading.Thread(target=asr_bridge.start).start()
 
     is_finished = False
@@ -371,10 +327,9 @@ async def websocket_endpoint(ws: WebSocket):
             out = await dialog_bridge(
                 ws,
                 asr_bridge,
-                llm_bridge,
                 tts_bridge,
                 firestore_client=firestore_client,
-                llm_bridge_for_slot_filling=llm_bridge_for_slot_filling,
+                conversation_logger=conversation_logger,
             )
 
             if out["asr_done"]:
@@ -395,7 +350,7 @@ async def websocket_endpoint(ws: WebSocket):
             # 暗黙確認時にのみバージインを許可するため、botが話し終わったタイミングでバージインを毎回オフにする
             dialog_bridge.allow_barge_in = False
             logger.info("set allow_barge_in to False")
-            if is_finished:
+            if is_finished or (dialog_bridge.dialogue_system.is_complete() and tts_bridge.is_empty):
                 break
         elif data["event"] == "mark" and data["mark"]["name"] == "finish":
             is_finished = True
@@ -404,7 +359,6 @@ async def websocket_endpoint(ws: WebSocket):
 
     logger.info("Media WS: Connection closed")
     asr_bridge.terminate()
-    dialog_bridge.terminate()
     # t_tts.join()
 
     logger.info("WS connection completedly closed")
@@ -414,6 +368,9 @@ async def websocket_endpoint(ws: WebSocket):
             twiml=twiml,
             status=CallInstance.UpdateStatus.COMPLETED,
         )
+        await conversation_logger.save_conversation_log_to_gcs(gcs_conversation_log_path)
+        conversation_logger.to_csv(f"{gcs_conversation_log_path.replace('/', '_')}.csv")
+        
     except twilio_exceptions.TwilioRestException as e:
         logger.warning(f"Could not update CallContext because '{e}'")
     except http.client.RemoteDisconnected as e:
@@ -422,6 +379,7 @@ async def websocket_endpoint(ws: WebSocket):
             client.calls(call_sid).update(
                 twiml=twiml, status=CallInstance.UpdateStatus.COMPLETED
             )
+            await conversation_logger.save_conversation_log_to_gcs(gcs_conversation_log_path)
         except http.client.RemoteDisconnected as e:
             logger.error(
                 f"Updating CallContext is twice RemoteDisconnected. Error is '{e}'"
